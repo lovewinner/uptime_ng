@@ -53,7 +53,6 @@ const pingChartOption = computed(() => ({
         .filter((d: any) => d.up > 0)
         .map((d: any) => [new Date(d.timestamp * 1000), d.max_ping !== undefined ? Number(d.max_ping) : 0]),
       smooth: true,
-      lineStyle: { type: 'dashed', width: 1 },
       symbol: 'none',
     },
     {
@@ -72,7 +71,6 @@ const pingChartOption = computed(() => ({
         .filter((d: any) => d.up > 0)
         .map((d: any) => [new Date(d.timestamp * 1000), d.min_ping !== undefined ? Number(d.min_ping) : 0]),
       smooth: true,
-      lineStyle: { type: 'dashed', width: 1 },
       symbol: 'none',
     },
   ],
