@@ -3,6 +3,9 @@ package engine
 import (
 	"context"
 	"net"
+	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"uptime_ng/internal/model"
@@ -84,108 +87,58 @@ func (c *PingChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 		timeout = 30 * time.Second
 	}
 
-	perRequestTimeout := time.Duration(monitor.PingPerRequestTimeout) * time.Millisecond
-	if perRequestTimeout <= 0 {
-		perRequestTimeout = 1000 * time.Millisecond
+	deadline := strconv.Itoa(int(timeout.Seconds()))
+	if deadline == "0" {
+		deadline = "30"
 	}
+	countStr := strconv.Itoa(count)
 
-	totalPing, successCount := c.pingHost(monitor.Hostname, count, timeout, perRequestTimeout)
+	cmd := exec.Command("ping", "-c", countStr, "-W", deadline, monitor.Hostname)
+	output, err := cmd.Output()
 	elapsed := float64(time.Since(start).Milliseconds())
 
 	result := &CheckResult{
-		PingMS: totalPing / float64(count),
+		PingMS: elapsed,
+	}
+
+	if err != nil {
+		result.Status = model.StatusDown
+		result.Msg = "ping failed"
+		return result, nil
+	}
+
+	outStr := string(output)
+	totalPing := 0.0
+	successCount := 0
+
+	lines := strings.Split(outStr, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "time=") || strings.Contains(line, "time<") {
+			successCount++
+			parts := strings.Split(line, " time=")
+			if len(parts) < 2 {
+				continue
+			}
+			timePart := strings.TrimSuffix(parts[1], " ms")
+			timePart = strings.TrimSuffix(timePart, " µs")
+			timePart = strings.TrimSuffix(timePart, " us")
+			v, err := strconv.ParseFloat(timePart, 64)
+			if err == nil {
+				totalPing += v
+			}
+		}
 	}
 
 	if successCount > 0 {
 		result.Status = model.StatusUP
 		result.Msg = "ping OK"
+		result.PingMS = totalPing / float64(successCount)
 	} else {
 		result.Status = model.StatusDown
 		result.Msg = "ping failed: all packets lost"
-		result.PingMS = elapsed
 	}
 
 	return result, nil
-}
-
-func (c *PingChecker) pingHost(hostname string, count int, timeout, perRequestTimeout time.Duration) (totalPing float64, success int) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	resolver := &net.Resolver{}
-	ips, err := resolver.LookupIPAddr(ctx, hostname)
-	if err != nil || len(ips) == 0 {
-		return 0, 0
-	}
-
-	targetIP := ips[0].IP.To4()
-	if targetIP == nil {
-		targetIP = ips[0].IP.To16()
-	}
-
-	addr := &net.IPAddr{IP: targetIP}
-
-	for i := 0; i < count; i++ {
-		start := time.Now()
-		conn, err := net.DialIP("ip4:icmp", nil, addr)
-		if err != nil {
-			continue
-		}
-
-		conn.SetDeadline(time.Now().Add(perRequestTimeout))
-
-		msg := buildICMPEchoRequest(uint16(i), uint16(i+1))
-		_, err = conn.Write(msg)
-		if err != nil {
-			conn.Close()
-			continue
-		}
-
-		reply := make([]byte, 128)
-		_, err = conn.Read(reply)
-		conn.Close()
-
-		if err != nil {
-			continue
-		}
-
-		elapsed := float64(time.Since(start).Milliseconds())
-		totalPing += elapsed
-		success++
-	}
-
-	return totalPing, success
-}
-
-func buildICMPEchoRequest(id, seq uint16) []byte {
-	var msg [8]byte
-	msg[0] = 8 // ICMP Echo
-	msg[1] = 0
-	msg[2] = 0 // Checksum placeholder
-	msg[3] = 0
-	msg[4] = byte(id >> 8)
-	msg[5] = byte(id & 0xff)
-	msg[6] = byte(seq >> 8)
-	msg[7] = byte(seq & 0xff)
-
-	checksum := icmpChecksum(msg[:])
-	msg[2] = byte(checksum >> 8)
-	msg[3] = byte(checksum & 0xff)
-
-	return msg[:]
-}
-
-func icmpChecksum(data []byte) uint16 {
-	sum := uint32(0)
-	for i := 0; i < len(data)-1; i += 2 {
-		sum += uint32(data[i])<<8 | uint32(data[i+1])
-	}
-	if len(data)%2 == 1 {
-		sum += uint32(data[len(data)-1]) << 8
-	}
-	sum = (sum >> 16) + (sum & 0xffff)
-	sum += sum >> 16
-	return uint16(^sum)
 }
 
 type DNSChecker struct{}
