@@ -115,6 +115,7 @@ function formatPing(ping: number | null): string {
 onMounted(async () => {
   loading.value = true
   try {
+    await store.fetchStatus()
     const id = monitorId.value
 
     const res = await api.get(`/monitors/${id}`)
