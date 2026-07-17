@@ -62,6 +62,7 @@ function goDetail(id: number) {
 
 function getUrl(monitor: Monitor): string {
   if (monitor.url) return monitor.url
+  if (monitor.type === 'ping') return monitor.hostname || '-'
   if (monitor.hostname && monitor.port) return `${monitor.hostname}:${monitor.port}`
   if (monitor.hostname) return monitor.hostname
   return '-'
