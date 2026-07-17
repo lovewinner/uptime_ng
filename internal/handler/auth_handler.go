@@ -38,24 +38,24 @@ type TokenResponse struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 
 	var user model.User
 	if err := h.DB.Where("username = ? AND active = ?", req.Username, true).First(&user).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		errorResponse(c, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
 		return
 	}
 
 	if !model.CheckPasswordHash(req.Password, user.Password) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		errorResponse(c, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
 		return
 	}
 
 	token, err := model.GenerateJWT(&user, config.AppConfig.JWT.Secret, config.AppConfig.JWT.ExpireHours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		errorResponse(c, http.StatusInternalServerError, "token_generation_failed", "failed to generate token")
 		return
 	}
 
@@ -70,7 +70,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 
@@ -82,13 +82,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	var existing model.User
 	if err := h.DB.Where("username = ?", req.Username).First(&existing).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "username already exists"})
+		errorResponse(c, http.StatusConflict, "username_exists", "username already exists")
 		return
 	}
 
 	hashedPassword, err := model.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+		errorResponse(c, http.StatusInternalServerError, "password_hash_failed", "failed to hash password")
 		return
 	}
 
@@ -105,13 +105,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	if err := h.DB.Create(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "user_create_failed", err.Error())
 		return
 	}
 
 	token, err := model.GenerateJWT(&user, config.AppConfig.JWT.Secret, config.AppConfig.JWT.ExpireHours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		errorResponse(c, http.StatusInternalServerError, "token_generation_failed", "failed to generate token")
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *AuthHandler) Profile(c *gin.Context) {
 
 	var user model.User
 	if err := h.DB.First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		errorResponse(c, http.StatusNotFound, "user_not_found", "user not found")
 		return
 	}
 
@@ -164,39 +164,80 @@ func (h *AuthHandler) ListUsers(c *gin.Context) {
 }
 
 type UpdateUserRequest struct {
-	Role   *string `json:"role"`
-	Active *bool   `json:"active"`
+	Role     *string `json:"role"`
+	Active   *bool   `json:"active"`
+	Password *string `json:"password"`
 }
 
 func (h *AuthHandler) UpdateUser(c *gin.Context) {
 	userID := c.Param("id")
+	currentUserID := c.GetUint("user_id")
+
+	var target model.User
+	if err := h.DB.First(&target, userID).Error; err != nil {
+		errorResponse(c, http.StatusNotFound, "user_not_found", "user not found")
+		return
+	}
 
 	var req UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 
 	updates := map[string]interface{}{}
 	if req.Role != nil {
 		if *req.Role != model.RoleAdmin && *req.Role != model.RoleUser {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "role must be admin or user"})
+			badRequest(c, "invalid_role", "role must be admin or user")
+			return
+		}
+		if target.Role == model.RoleAdmin && *req.Role != model.RoleAdmin && h.isLastActiveAdmin(target.ID) {
+			badRequest(c, "last_admin", "cannot remove the last active admin")
 			return
 		}
 		updates["role"] = *req.Role
 	}
 	if req.Active != nil {
+		if target.ID == currentUserID && !*req.Active {
+			badRequest(c, "self_deactivate", "cannot deactivate yourself")
+			return
+		}
+		if target.Role == model.RoleAdmin && !*req.Active && h.isLastActiveAdmin(target.ID) {
+			badRequest(c, "last_admin", "cannot deactivate the last active admin")
+			return
+		}
 		updates["active"] = *req.Active
 	}
+	if req.Password != nil {
+		if len(*req.Password) < 6 {
+			badRequest(c, "invalid_password", "password must be at least 6 characters")
+			return
+		}
+		hashedPassword, err := model.HashPassword(*req.Password)
+		if err != nil {
+			errorResponse(c, http.StatusInternalServerError, "password_hash_failed", "failed to hash password")
+			return
+		}
+		updates["password"] = hashedPassword
+	}
 	if len(updates) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no updates provided"})
+		badRequest(c, "empty_update", "no updates provided")
 		return
 	}
 
 	if err := h.DB.Model(&model.User{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "user_update_failed", err.Error())
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "user updated"})
+}
+
+func (h *AuthHandler) isLastActiveAdmin(userID uint) bool {
+	var count int64
+	h.DB.Model(&model.User{}).
+		Where("role = ? AND active = ?", model.RoleAdmin, true).
+		Where("id <> ?", userID).
+		Count(&count)
+	return count == 0
 }

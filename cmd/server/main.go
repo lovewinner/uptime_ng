@@ -16,6 +16,7 @@ import (
 	"uptime_ng/internal/config"
 	"uptime_ng/internal/engine"
 	"uptime_ng/internal/handler"
+	"uptime_ng/internal/migration"
 	"uptime_ng/internal/model"
 	"uptime_ng/internal/router"
 )
@@ -23,6 +24,9 @@ import (
 func main() {
 	if err := config.Load(); err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+	if config.AppConfig.JWT.UsesDefaultSecret() {
+		log.Println("WARNING: using the default JWT secret; set UPTIME_NG_JWT_SECRET before production use")
 	}
 
 	dsn := config.AppConfig.Database.DSN()
@@ -39,6 +43,11 @@ func main() {
 	sqlDB.SetMaxIdleConns(10)
 
 	log.Println("Database connected successfully")
+
+	if err := migration.Apply(db, "migrations"); err != nil {
+		log.Fatalf("Failed to apply migrations: %v", err)
+	}
+	log.Println("Database migrations applied")
 
 	if err := db.AutoMigrate(
 		&model.User{},

@@ -150,6 +150,5 @@ func (c *Client) readPump(hub *WSHub) {
 		}
 
 		log.Printf("ws received from user %d: %v", c.UserID, msg)
-		// Client-to-server messages will be handled in P3
 	}
 }

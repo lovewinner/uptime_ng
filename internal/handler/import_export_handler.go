@@ -50,11 +50,23 @@ type ExportMonitor struct {
 	Headers               string      `json:"headers"`
 	Body                  string      `json:"body"`
 	AuthMethod            string      `json:"auth_method"`
+	AuthWorkstation       string      `json:"auth_workstation"`
+	AuthDomain            string      `json:"auth_domain"`
+	TLSCa                 string      `json:"tls_ca"`
+	OAuthTokenURL         string      `json:"oauth_token_url"`
+	OAuthScopes           string      `json:"oauth_scopes"`
+	OAuthAuthMethod       string      `json:"oauth_auth_method"`
+	OAuthAudience         string      `json:"oauth_audience"`
 	Keyword               string      `json:"keyword"`
 	InvertKeyword         bool        `json:"invert_keyword"`
 	ExpiryNotification    bool        `json:"expiry_notification"`
 	PacketSize            uint32      `json:"packet_size"`
 	HTTPBodyEncoding      string      `json:"http_body_encoding"`
+	RetryOnlyOnStatusCode bool        `json:"retry_only_on_status_code"`
+	CacheBust             bool        `json:"cache_bust"`
+	SaveResponse          bool        `json:"save_response"`
+	SaveErrorResponse     bool        `json:"save_error_response"`
+	ResponseMaxLength     uint32      `json:"response_max_length"`
 	DNSResolveType        string      `json:"dns_resolve_type"`
 	DNSResolveServer      string      `json:"dns_resolve_server"`
 	PingNumeric           bool        `json:"ping_numeric"`
@@ -76,12 +88,14 @@ type ExportNotification struct {
 }
 
 type ImportPreviewResponse struct {
-	NewCount      int              `json:"new_count"`
-	ConflictCount int              `json:"conflict_count"`
-	Conflicts     []ImportConflict `json:"conflicts"`
-	NewMonitors   []ExportMonitor  `json:"new_monitors"`
-	NewTags       []ExportTag      `json:"new_tags"`
-	Summary       string           `json:"summary"`
+	NewCount            int              `json:"new_count"`
+	ConflictCount       int              `json:"conflict_count"`
+	Conflicts           []ImportConflict `json:"conflicts"`
+	NewMonitors         []ExportMonitor  `json:"new_monitors"`
+	NewTags             []ExportTag      `json:"new_tags"`
+	Notifications       int              `json:"notifications"`
+	MaskedNotifications int              `json:"masked_notifications"`
+	Summary             string           `json:"summary"`
 }
 
 type ImportConflict struct {
@@ -176,11 +190,23 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 			Headers:               m.Headers,
 			Body:                  m.Body,
 			AuthMethod:            m.AuthMethod,
+			AuthWorkstation:       m.AuthWorkstation,
+			AuthDomain:            m.AuthDomain,
+			TLSCa:                 m.TLSCa,
+			OAuthTokenURL:         m.OAuthTokenURL,
+			OAuthScopes:           m.OAuthScopes,
+			OAuthAuthMethod:       m.OAuthAuthMethod,
+			OAuthAudience:         m.OAuthAudience,
 			Keyword:               m.Keyword,
 			InvertKeyword:         m.InvertKeyword,
 			ExpiryNotification:    m.ExpiryNotification,
 			PacketSize:            m.PacketSize,
 			HTTPBodyEncoding:      m.HTTPBodyEncoding,
+			RetryOnlyOnStatusCode: m.RetryOnlyOnStatusCode,
+			CacheBust:             m.CacheBust,
+			SaveResponse:          m.SaveResponse,
+			SaveErrorResponse:     m.SaveErrorResponse,
+			ResponseMaxLength:     m.ResponseMaxLength,
 			DNSResolveType:        m.DNSResolveType,
 			DNSResolveServer:      m.DNSResolveServer,
 			PingNumeric:           m.PingNumeric,
@@ -217,7 +243,7 @@ func (h *ImportExportHandler) ImportPreview(c *gin.Context) {
 
 	var req ImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 
@@ -242,6 +268,15 @@ func (h *ImportExportHandler) ImportPreview(c *gin.Context) {
 			}
 		}
 	}
+	for _, en := range req.Data.Notifications {
+		if en.Name == "" {
+			continue
+		}
+		preview.Notifications++
+		if containsMaskedValue(en.Config) {
+			preview.MaskedNotifications++
+		}
+	}
 
 	if preview.ConflictCount > 0 {
 		preview.Summary = "found " + itoa(preview.ConflictCount) + " conflicts, please choose a strategy"
@@ -257,7 +292,7 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 
 	var req ImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 
@@ -341,7 +376,7 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "import_commit_failed", err.Error())
 		return
 	}
 	if h.Scheduler != nil {
@@ -381,11 +416,23 @@ func newMonitorFromExport(userID uint, em ExportMonitor) model.Monitor {
 		Headers:               em.Headers,
 		Body:                  em.Body,
 		AuthMethod:            em.AuthMethod,
+		AuthWorkstation:       em.AuthWorkstation,
+		AuthDomain:            em.AuthDomain,
+		TLSCa:                 em.TLSCa,
+		OAuthTokenURL:         em.OAuthTokenURL,
+		OAuthScopes:           em.OAuthScopes,
+		OAuthAuthMethod:       em.OAuthAuthMethod,
+		OAuthAudience:         em.OAuthAudience,
 		Keyword:               em.Keyword,
 		InvertKeyword:         em.InvertKeyword,
 		ExpiryNotification:    em.ExpiryNotification,
 		PacketSize:            em.PacketSize,
 		HTTPBodyEncoding:      em.HTTPBodyEncoding,
+		RetryOnlyOnStatusCode: em.RetryOnlyOnStatusCode,
+		CacheBust:             em.CacheBust,
+		SaveResponse:          em.SaveResponse,
+		SaveErrorResponse:     em.SaveErrorResponse,
+		ResponseMaxLength:     em.ResponseMaxLength,
 		DNSResolveType:        em.DNSResolveType,
 		DNSResolveServer:      em.DNSResolveServer,
 		PingNumeric:           em.PingNumeric,
@@ -415,11 +462,23 @@ func applyExportMonitor(existing model.Monitor, em ExportMonitor) model.Monitor 
 	existing.Headers = em.Headers
 	existing.Body = em.Body
 	existing.AuthMethod = em.AuthMethod
+	existing.AuthWorkstation = em.AuthWorkstation
+	existing.AuthDomain = em.AuthDomain
+	existing.TLSCa = em.TLSCa
+	existing.OAuthTokenURL = em.OAuthTokenURL
+	existing.OAuthScopes = em.OAuthScopes
+	existing.OAuthAuthMethod = em.OAuthAuthMethod
+	existing.OAuthAudience = em.OAuthAudience
 	existing.Keyword = em.Keyword
 	existing.InvertKeyword = em.InvertKeyword
 	existing.ExpiryNotification = em.ExpiryNotification
 	existing.PacketSize = em.PacketSize
 	existing.HTTPBodyEncoding = em.HTTPBodyEncoding
+	existing.RetryOnlyOnStatusCode = em.RetryOnlyOnStatusCode
+	existing.CacheBust = em.CacheBust
+	existing.SaveResponse = em.SaveResponse
+	existing.SaveErrorResponse = em.SaveErrorResponse
+	existing.ResponseMaxLength = em.ResponseMaxLength
 	existing.DNSResolveType = em.DNSResolveType
 	existing.DNSResolveServer = em.DNSResolveServer
 	existing.PingNumeric = em.PingNumeric

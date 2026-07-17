@@ -50,9 +50,17 @@ export const useAuthStore = defineStore('auth', () => {
       const data = res.data
       setAuth(data.token, data.username, data.role, data.user_id)
       return { ok: true }
-    } catch (e: any) {
-      return { ok: false, error: e.response?.data?.error || '注册失败' }
+    } catch (e: unknown) {
+      return { ok: false, error: authErrorMessage(e, '注册失败') }
     }
+  }
+
+  function authErrorMessage(e: unknown, fallback: string): string {
+    if (typeof e === 'object' && e !== null && 'response' in e) {
+      const response = (e as { response?: { data?: { error?: string } } }).response
+      return response?.data?.error || fallback
+    }
+    return fallback
   }
 
   const isLoggedIn = () => !!token.value

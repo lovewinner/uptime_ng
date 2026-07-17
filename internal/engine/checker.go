@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os/exec"
 	"strconv"
@@ -87,13 +88,21 @@ func (c *PingChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 		timeout = 30 * time.Second
 	}
 
-	deadline := strconv.Itoa(int(timeout.Seconds()))
-	if deadline == "0" {
-		deadline = "30"
+	perRequestTimeout := time.Duration(monitor.PingPerRequestTimeout) * time.Millisecond
+	if perRequestTimeout <= 0 {
+		perRequestTimeout = time.Second
 	}
+	deadlineSeconds := int((perRequestTimeout + time.Second - 1) / time.Second)
+	if deadlineSeconds <= 0 {
+		deadlineSeconds = 1
+	}
+	deadline := strconv.Itoa(deadlineSeconds)
 	countStr := strconv.Itoa(count)
 
-	cmd := exec.Command("ping", "-c", countStr, "-W", deadline, monitor.Hostname)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ping", "-c", countStr, "-W", deadline, monitor.Hostname)
 	output, err := cmd.Output()
 	elapsed := float64(time.Since(start).Milliseconds())
 
@@ -103,7 +112,11 @@ func (c *PingChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 
 	if err != nil {
 		result.Status = model.StatusDown
-		result.Msg = "ping failed"
+		if ctx.Err() == context.DeadlineExceeded {
+			result.Msg = "ping failed: timeout"
+		} else {
+			result.Msg = "ping failed"
+		}
 		return result, nil
 	}
 
@@ -131,7 +144,8 @@ func (c *PingChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 
 	if successCount > 0 {
 		result.Status = model.StatusUP
-		result.Msg = "ping OK"
+		loss := 100 - int(float64(successCount)/float64(count)*100)
+		result.Msg = fmt.Sprintf("ping OK, packet loss %d%% (%d/%d received)", loss, successCount, count)
 		result.PingMS = totalPing / float64(successCount)
 	} else {
 		result.Status = model.StatusDown
@@ -158,7 +172,25 @@ func (c *DNSChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 	defer cancel()
 
 	resolver := &net.Resolver{}
-	ips, err := resolver.LookupHost(ctx, monitor.Hostname)
+	if monitor.DNSResolveServer != "" {
+		server := monitor.DNSResolveServer
+		if _, _, err := net.SplitHostPort(server); err != nil {
+			server = net.JoinHostPort(server, "53")
+		}
+		resolver = &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				dialer := net.Dialer{}
+				return dialer.DialContext(ctx, "udp", server)
+			},
+		}
+	}
+
+	recordType := strings.ToUpper(strings.TrimSpace(monitor.DNSResolveType))
+	if recordType == "" {
+		recordType = "A"
+	}
+	values, err := lookupDNSRecord(ctx, resolver, recordType, monitor.Hostname)
 	elapsed := float64(time.Since(start).Milliseconds())
 
 	result := &CheckResult{
@@ -171,15 +203,64 @@ func (c *DNSChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 		return result, nil
 	}
 
-	if len(ips) == 0 {
+	if len(values) == 0 {
 		result.Status = model.StatusDown
 		result.Msg = "DNS lookup returned empty result"
 		return result, nil
 	}
 
 	result.Status = model.StatusUP
-	result.Msg = "DNS resolved to " + ips[0]
+	result.Msg = fmt.Sprintf("DNS %s resolved to %s", recordType, strings.Join(values, ", "))
 	return result, nil
+}
+
+func lookupDNSRecord(ctx context.Context, resolver *net.Resolver, recordType string, hostname string) ([]string, error) {
+	switch recordType {
+	case "A":
+		ips, err := resolver.LookupIP(ctx, "ip4", hostname)
+		return ipStrings(ips), err
+	case "AAAA":
+		ips, err := resolver.LookupIP(ctx, "ip6", hostname)
+		return ipStrings(ips), err
+	case "CNAME":
+		cname, err := resolver.LookupCNAME(ctx, hostname)
+		if err != nil {
+			return nil, err
+		}
+		return []string{cname}, nil
+	case "MX":
+		records, err := resolver.LookupMX(ctx, hostname)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(records))
+		for _, record := range records {
+			out = append(out, fmt.Sprintf("%s(%d)", record.Host, record.Pref))
+		}
+		return out, nil
+	case "TXT":
+		return resolver.LookupTXT(ctx, hostname)
+	case "NS":
+		records, err := resolver.LookupNS(ctx, hostname)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(records))
+		for _, record := range records {
+			out = append(out, record.Host)
+		}
+		return out, nil
+	default:
+		return resolver.LookupHost(ctx, hostname)
+	}
+}
+
+func ipStrings(ips []net.IP) []string {
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, ip.String())
+	}
+	return out
 }
 
 func uint16toa(v uint16) string {

@@ -4,7 +4,7 @@
 
 ## 技术栈
 
-- **后端**: Go 1.23 + Gin + GORM
+- **后端**: Go 1.24 + Gin + GORM
 - **前端**: Vue 3 + Vite + TypeScript + Element Plus + ECharts
 - **数据库**: PostgreSQL 16
 - **实时通信**: WebSocket (gorilla/websocket)
@@ -75,6 +75,8 @@ npm run dev
 前端开发服务器： http://localhost:5173 （自动代理 API 请求到后端 3000）
 
 ## API 概览
+
+完整请求/响应字段见 [API Reference](docs/API.md)。
 
 ### 认证
 - `POST /api/auth/register` - 注册
@@ -149,6 +151,10 @@ smtp:
 feishu:
   webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/xxx
 ```
+
+## 数据库迁移
+
+服务启动时会先执行 `migrations/*.sql`，并在 `schema_migrations` 表中记录文件名、校验和与应用时间；如果已应用迁移文件内容发生变化，启动会失败以避免不可追踪的 schema 漂移。随后仍会执行 GORM `AutoMigrate`，用于补齐模型字段。
 
 ## 导入导出格式示例
 

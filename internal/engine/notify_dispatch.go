@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -89,6 +90,9 @@ func (d *NotifyDispatch) sendEmail(notif model.Notification, monitor *model.Moni
 	if to == "" {
 		to = configMap["to"]
 	}
+	if cc := configMap["cc"]; cc != "" {
+		to += "," + cc
+	}
 	if to == "" {
 		log.Printf("[email] notification %s has no recipient", notif.Name)
 		return
@@ -100,14 +104,37 @@ func (d *NotifyDispatch) sendEmail(notif model.Notification, monitor *model.Moni
 		statusText = "UP (已恢复)"
 	}
 
-	subject := "[uptime_ng] " + monitor.Name + " - " + statusText
-	body := notifier.FormatEmailTemplate(monitor, statusText, msg)
+	vars := map[string]string{
+		"NAME":   monitor.Name,
+		"TYPE":   monitor.Type,
+		"STATUS": statusText,
+		"MSG":    msg,
+	}
+	subject := formatNotifyTemplate(configMap["subject_template"], vars)
+	if subject == "" {
+		subject = "[uptime_ng] " + monitor.Name + " - " + statusText
+	}
+	body := formatNotifyTemplate(configMap["body_template"], vars)
+	if body == "" {
+		body = notifier.FormatEmailTemplate(monitor, statusText, msg)
+	}
 
 	if err := n.Send(subject, body); err != nil {
 		log.Printf("[email] failed to send to %s: %v", to, err)
 	} else {
 		log.Printf("[email] Alert sent for %s to %s", monitor.Name, to)
 	}
+}
+
+func formatNotifyTemplate(tpl string, vars map[string]string) string {
+	result := strings.TrimSpace(tpl)
+	if result == "" {
+		return ""
+	}
+	for k, v := range vars {
+		result = strings.ReplaceAll(result, "{{"+k+"}}", v)
+	}
+	return result
 }
 
 func (d *NotifyDispatch) markIncident(db *gorm.DB, monitorID uint, monitorName string, prevStatus, newStatus uint16, msg string) {

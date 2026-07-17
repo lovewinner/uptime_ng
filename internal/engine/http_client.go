@@ -3,11 +3,16 @@ package engine
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
+
+	"github.com/Azure/go-ntlmssp"
 
 	"uptime_ng/internal/model"
 )
@@ -52,14 +57,45 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 		}, nil
 	}
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: monitor.IgnoreTLS,
+	maxRedirects := int(monitor.MaxRedirects)
+	if maxRedirects <= 0 {
+		maxRedirects = model.DefaultHTTPMaxRedirects
+	}
+
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+			}
+			return nil
 		},
 	}
 
-	if monitor.IgnoreTLS {
-		h.client.Transport = transport
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: monitor.IgnoreTLS,
+	}
+	if monitor.AuthMethod == "mtls" {
+		cert, err := tls.X509KeyPair([]byte(monitor.TLSCert), []byte(monitor.TLSKey))
+		if err != nil {
+			return &CheckResult{Status: model.StatusDown, PingMS: 0, Msg: "Failed to load mTLS certificate: " + err.Error()}, nil
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	if monitor.TLSCa != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(monitor.TLSCa)) {
+			return &CheckResult{Status: model.StatusDown, PingMS: 0, Msg: "Failed to load TLS CA"}, nil
+		}
+		tlsConfig.RootCAs = pool
+	}
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+	if monitor.AuthMethod == "ntlm" {
+		client.Transport = ntlmssp.Negotiator{RoundTripper: transport}
+	} else {
+		client.Transport = transport
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -68,6 +104,10 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 	var reqBody io.Reader
 	if monitor.Body != "" {
 		reqBody = strings.NewReader(monitor.Body)
+	}
+
+	if monitor.CacheBust {
+		url = addCacheBust(url, start)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), url, reqBody)
@@ -85,8 +125,26 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 	if monitor.AuthMethod == "basic" && monitor.BasicAuthUser != "" {
 		req.SetBasicAuth(monitor.BasicAuthUser, monitor.BasicAuthPass)
 	}
+	if monitor.AuthMethod == "ntlm" && monitor.BasicAuthUser != "" {
+		user := monitor.BasicAuthUser
+		if monitor.AuthDomain != "" && !strings.Contains(user, `\`) {
+			user = monitor.AuthDomain + `\` + user
+		}
+		req.SetBasicAuth(user, monitor.BasicAuthPass)
+	}
 	if monitor.AuthMethod == "bearer" && monitor.BearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+monitor.BearerToken)
+	}
+	if monitor.AuthMethod == "oauth2-cc" {
+		token, err := fetchOAuthClientCredentialsToken(ctx, client, monitor)
+		if err != nil {
+			return &CheckResult{
+				Status: model.StatusDown,
+				PingMS: float64(time.Since(start).Milliseconds()),
+				Msg:    "OAuth2 token request failed: " + err.Error(),
+			}, nil
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	if monitor.Headers != "" {
@@ -104,7 +162,7 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
 	}
 
-	resp, err := h.client.Do(req)
+	resp, err := client.Do(req)
 	elapsed := float64(time.Since(start).Milliseconds())
 
 	if err != nil {
@@ -130,6 +188,9 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 	if !statusOK {
 		result.Status = model.StatusDown
 		result.Msg += " (unexpected status code)"
+		if monitor.SaveErrorResponse {
+			result.Msg += responsePreview(bodyStr, monitor.ResponseMaxLength)
+		}
 		return result, nil
 	}
 
@@ -149,13 +210,88 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 					preview = preview[:97] + "..."
 				}
 				result.Msg += ", keyword not found in response: " + preview
+				if monitor.SaveErrorResponse {
+					result.Msg += responsePreview(bodyStr, monitor.ResponseMaxLength)
+				}
 				return result, nil
 			}
 		}
 	}
 
 	result.Status = model.StatusUP
+	if monitor.SaveResponse {
+		result.Msg += responsePreview(bodyStr, monitor.ResponseMaxLength)
+	}
 	return result, nil
+}
+
+func addCacheBust(rawURL string, t time.Time) string {
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := parsed.Query()
+	q.Set("_uptime_ng", fmt.Sprintf("%d", t.UnixNano()))
+	parsed.RawQuery = q.Encode()
+	return parsed.String()
+}
+
+func fetchOAuthClientCredentialsToken(ctx context.Context, client *http.Client, monitor *model.Monitor) (string, error) {
+	if monitor.OAuthTokenURL == "" || monitor.OAuthClientID == "" || monitor.OAuthClientSecret == "" {
+		return "", fmt.Errorf("oauth token_url, client_id and client_secret are required")
+	}
+	form := neturl.Values{}
+	form.Set("grant_type", "client_credentials")
+	form.Set("client_id", monitor.OAuthClientID)
+	form.Set("client_secret", monitor.OAuthClientSecret)
+	if monitor.OAuthScopes != "" {
+		form.Set("scope", monitor.OAuthScopes)
+	}
+	if monitor.OAuthAudience != "" {
+		form.Set("audience", monitor.OAuthAudience)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, monitor.OAuthTokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if monitor.OAuthAuthMethod == "basic" {
+		req.SetBasicAuth(monitor.OAuthClientID, monitor.OAuthClientSecret)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.AccessToken == "" {
+		return "", fmt.Errorf("access_token missing in token response")
+	}
+	return parsed.AccessToken, nil
+}
+
+func responsePreview(body string, maxLen uint32) string {
+	if body == "" {
+		return ""
+	}
+	limit := int(maxLen)
+	if limit <= 0 {
+		limit = model.DefaultResponseMaxLen
+	}
+	if len(body) > limit {
+		body = body[:limit] + "..."
+	}
+	return ", response: " + body
 }
 
 func parseHeaders(raw string) map[string]string {

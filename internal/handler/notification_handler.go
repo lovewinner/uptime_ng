@@ -31,12 +31,12 @@ func (h *NotificationHandler) Create(c *gin.Context) {
 
 	var req CreateNotificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 
 	if req.Type != "feishu" && req.Type != "email" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be feishu or email"})
+		badRequest(c, "invalid_notification_type", "type must be feishu or email")
 		return
 	}
 
@@ -49,7 +49,7 @@ func (h *NotificationHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.DB.Create(&notif).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "notification_create_failed", err.Error())
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *NotificationHandler) Get(c *gin.Context) {
 
 	var notif model.Notification
 	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&notif).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found"})
+		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
 		return
 	}
 
@@ -84,17 +84,17 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 
 	var notif model.Notification
 	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&notif).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found"})
+		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
 		return
 	}
 
 	var req CreateNotificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 	if req.Type != "feishu" && req.Type != "email" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be feishu or email"})
+		badRequest(c, "invalid_notification_type", "type must be feishu or email")
 		return
 	}
 
@@ -103,7 +103,7 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 	notif.Config = req.Config
 
 	if err := h.DB.Save(&notif).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "notification_update_failed", err.Error())
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *NotificationHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).Delete(&model.Notification{}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "notification_delete_failed", err.Error())
 		return
 	}
 
@@ -130,13 +130,13 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 
 	var notif model.Notification
 	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&notif).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found"})
+		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
 		return
 	}
 
 	var configMap map[string]string
 	if err := json.Unmarshal([]byte(notif.Config), &configMap); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification config json"})
+		badRequest(c, "invalid_notification_config", "invalid notification config json")
 		return
 	}
 
@@ -145,11 +145,11 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 	case "feishu":
 		webhookURL := configMap["webhook_url"]
 		if webhookURL == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing webhook_url"})
+			badRequest(c, "missing_webhook_url", "missing webhook_url")
 			return
 		}
 		if err := notifier.NewFeishuNotifier(webhookURL, h.DB).SendText(msg); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			errorResponse(c, http.StatusBadGateway, "notification_send_failed", err.Error())
 			return
 		}
 	case "email":
@@ -157,17 +157,20 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 		if to == "" {
 			to = configMap["to"]
 		}
+		if cc := configMap["cc"]; cc != "" {
+			to += "," + cc
+		}
 		if to == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing email recipient"})
+			badRequest(c, "missing_email_recipient", "missing email recipient")
 			return
 		}
 		n := notifier.NewEmailNotifierFromConfig(to)
 		if err := n.Send("[uptime_ng] 通知测试", "<p>"+msg+"</p>"); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			errorResponse(c, http.StatusBadGateway, "notification_send_failed", err.Error())
 			return
 		}
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported notification type"})
+		badRequest(c, "unsupported_notification_type", "unsupported notification type")
 		return
 	}
 

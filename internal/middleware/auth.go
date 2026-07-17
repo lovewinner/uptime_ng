@@ -16,13 +16,13 @@ func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+			abortWithError(c, http.StatusUnauthorized, "missing_authorization_header", "missing authorization header")
 			return
 		}
 
 		claims, err := parseJWT(strings.TrimPrefix(authHeader, "Bearer "))
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			abortWithError(c, http.StatusUnauthorized, "invalid_token", "invalid token")
 			return
 		}
 
@@ -43,13 +43,13 @@ func WSAuthRequired() gin.HandlerFunc {
 			}
 		}
 		if tokenStr == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
+			abortWithError(c, http.StatusUnauthorized, "missing_token", "missing token")
 			return
 		}
 
 		claims, err := parseJWT(tokenStr)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			abortWithError(c, http.StatusUnauthorized, "invalid_token", "invalid token")
 			return
 		}
 
@@ -78,9 +78,16 @@ func AdminRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role, exists := c.Get("role")
 		if !exists || role != model.RoleAdmin {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "admin role required"})
+			abortWithError(c, http.StatusForbidden, "admin_required", "admin role required")
 			return
 		}
 		c.Next()
 	}
+}
+
+func abortWithError(c *gin.Context, status int, code string, message string) {
+	c.AbortWithStatusJSON(status, gin.H{
+		"error": message,
+		"code":  code,
+	})
 }

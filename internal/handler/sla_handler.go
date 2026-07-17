@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -42,11 +43,11 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 
 	var req SLARequest
 	req.PeriodType = c.DefaultQuery("period", "day")
-	days := periodToDays(req.PeriodType)
+	periodStart, periodEnd := periodRange(req.PeriodType, time.Now())
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
@@ -56,42 +57,13 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 		MonitorType: monitor.Type,
 	}
 
-	var stats []model.StatDaily
-	cutoff := int64(0)
-	if days > 0 {
-		cutoff = timeNowUnix() - int64(days)*86400
-	}
-
-	query := h.DB.Where("monitor_id = ?", monitorID)
-	if cutoff > 0 {
-		query = query.Where("timestamp >= ?", cutoff)
-	}
-	query.Find(&stats)
-
-	var totalUP, totalDown uint32
-	var totalPing float64
-	for _, s := range stats {
-		totalUP += s.Up
-		totalDown += s.Down
-		totalPing += s.AvgPing * float64(s.Up)
-	}
-	result.TotalChecks = totalUP + totalDown
-	result.FailedChecks = totalDown
-	if result.TotalChecks > 0 {
-		result.UptimePercentage = float64(totalUP) / float64(result.TotalChecks)
-	} else {
-		result.UptimePercentage = 1.0
-	}
-	if totalUP > 0 {
-		result.AvgPingMS = totalPing / float64(totalUP)
-	}
+	fillSLAFromHeartbeats(h.DB, &result, monitor.ID, periodStart, periodEnd)
 
 	var incCount int64
-	h.DB.Model(&model.Incident{}).Where("monitor_id = ?", monitorID).Where("started_at >= ?", time.Unix(cutoff, 0)).Count(&incCount)
+	h.DB.Model(&model.Incident{}).
+		Where("monitor_id = ? AND started_at >= ? AND started_at < ?", monitorID, periodStart, periodEnd).
+		Count(&incCount)
 	result.Incidents = uint32(incCount)
-	var incidents []model.Incident
-	h.DB.Where("monitor_id = ?", monitorID).Where("started_at >= ?", time.Unix(cutoff, 0)).Find(&incidents)
-	result.TotalDowntimeSec = sumDowntime(incidents)
 
 	c.JSON(http.StatusOK, result)
 }
@@ -99,47 +71,37 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 func (h *SLAHandler) GetOverall(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	periodType := c.DefaultQuery("period", "day")
-	days := periodToDays(periodType)
+	periodStart, periodEnd := periodRange(periodType, time.Now())
 
 	var monitors []model.Monitor
 	h.DB.Where("user_id = ?", userID).Find(&monitors)
 
 	results := make([]SLAResult, len(monitors))
-	cutoff := timeNowUnix() - int64(days)*86400
 
 	for i, m := range monitors {
-		var stats []model.StatDaily
-		h.DB.Where("monitor_id = ? AND timestamp >= ?", m.ID, cutoff).Find(&stats)
-
-		var totalUP, totalDown uint32
-		var totalPing float64
-		for _, s := range stats {
-			totalUP += s.Up
-			totalDown += s.Down
-			totalPing += s.AvgPing * float64(s.Up)
-		}
 		result := SLAResult{
-			MonitorID:    m.ID,
-			MonitorName:  m.Name,
-			MonitorType:  m.Type,
-			TotalChecks:  totalUP + totalDown,
-			FailedChecks: totalDown,
+			MonitorID:   m.ID,
+			MonitorName: m.Name,
+			MonitorType: m.Type,
 		}
-		if result.TotalChecks > 0 {
-			result.UptimePercentage = float64(totalUP) / float64(result.TotalChecks)
-		} else {
-			result.UptimePercentage = 1.0
-		}
-		if totalUP > 0 {
-			result.AvgPingMS = totalPing / float64(totalUP)
-		}
+		fillSLAFromHeartbeats(h.DB, &result, m.ID, periodStart, periodEnd)
 		var incCount int64
-		h.DB.Model(&model.Incident{}).Where("monitor_id = ? AND started_at >= ?", m.ID, time.Unix(cutoff, 0)).Count(&incCount)
+		h.DB.Model(&model.Incident{}).
+			Where("monitor_id = ? AND started_at >= ? AND started_at < ?", m.ID, periodStart, periodEnd).
+			Count(&incCount)
 		result.Incidents = uint32(incCount)
-		var incidents []model.Incident
-		h.DB.Where("monitor_id = ? AND started_at >= ?", m.ID, time.Unix(cutoff, 0)).Find(&incidents)
-		result.TotalDowntimeSec = sumDowntime(incidents)
 		results[i] = result
+	}
+
+	if data, err := json.Marshal(results); err == nil {
+		h.DB.Create(&model.SLAReport{
+			UserID:      userID.(uint),
+			PeriodType:  periodType,
+			PeriodStart: periodStart,
+			PeriodEnd:   periodEnd,
+			DataJSON:    string(data),
+			GeneratedAt: time.Now(),
+		})
 	}
 
 	c.JSON(http.StatusOK, results)
@@ -157,7 +119,7 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
@@ -225,7 +187,7 @@ func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
@@ -287,6 +249,87 @@ func periodToDays(period string) int {
 	}
 }
 
+func periodRange(period string, now time.Time) (time.Time, time.Time) {
+	loc := now.Location()
+	year, month, day := now.Date()
+	start := time.Date(year, month, day, 0, 0, 0, 0, loc)
+
+	switch period {
+	case "week":
+		weekday := int(start.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		start = start.AddDate(0, 0, -(weekday - 1))
+		return start, start.AddDate(0, 0, 7)
+	case "month":
+		start = time.Date(year, month, 1, 0, 0, 0, 0, loc)
+		return start, start.AddDate(0, 1, 0)
+	case "quarter":
+		quarterMonth := time.Month(((int(month)-1)/3)*3 + 1)
+		start = time.Date(year, quarterMonth, 1, 0, 0, 0, 0, loc)
+		return start, start.AddDate(0, 3, 0)
+	case "year":
+		start = time.Date(year, 1, 1, 0, 0, 0, 0, loc)
+		return start, start.AddDate(1, 0, 0)
+	default:
+		return start, start.AddDate(0, 0, 1)
+	}
+}
+
+func fillSLAFromHeartbeats(db *gorm.DB, result *SLAResult, monitorID uint, start, end time.Time) {
+	var previous model.Heartbeat
+	db.Where("monitor_id = ? AND time < ?", monitorID, start).Order("time DESC").First(&previous)
+
+	status := model.StatusUP
+	if previous.ID > 0 {
+		status = previous.Status
+	}
+
+	var beats []model.Heartbeat
+	db.Where("monitor_id = ? AND time >= ? AND time < ?", monitorID, start, end).
+		Order("time ASC").
+		Find(&beats)
+
+	last := start
+	var downtime time.Duration
+	var pingTotal float64
+	var pingCount uint32
+
+	for _, beat := range beats {
+		if beat.Time.After(last) && model.FlatStatus(status) == model.StatusDown {
+			downtime += beat.Time.Sub(last)
+		}
+		result.TotalChecks++
+		if model.FlatStatus(beat.Status) == model.StatusDown {
+			result.FailedChecks++
+		}
+		if model.FlatStatus(beat.Status) == model.StatusUP && beat.PingMS != nil {
+			pingTotal += *beat.PingMS
+			pingCount++
+		}
+		status = beat.Status
+		last = beat.Time
+	}
+
+	if end.After(last) && model.FlatStatus(status) == model.StatusDown {
+		downtime += end.Sub(last)
+	}
+
+	duration := end.Sub(start)
+	result.UptimePercentage = 1.0
+	if duration > 0 {
+		result.UptimePercentage = 1 - downtime.Seconds()/duration.Seconds()
+		if result.UptimePercentage < 0 {
+			result.UptimePercentage = 0
+		}
+	}
+	if pingCount > 0 {
+		result.AvgPingMS = pingTotal / float64(pingCount)
+	}
+	result.TotalDowntimeSec = uint32(downtime.Seconds())
+}
+
 func timeNowUnix() int64 {
 	return time.Now().Unix()
 }
@@ -294,19 +337,4 @@ func timeNowUnix() int64 {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
-}
-
-func sumDowntime(incidents []model.Incident) uint32 {
-	var total uint32
-	now := time.Now()
-	for _, incident := range incidents {
-		if incident.DurationSec > 0 {
-			total += incident.DurationSec
-			continue
-		}
-		if incident.EndedAt == nil {
-			total += uint32(now.Sub(incident.StartedAt).Seconds())
-		}
-	}
-	return total
 }

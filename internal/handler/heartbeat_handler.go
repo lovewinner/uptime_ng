@@ -29,7 +29,7 @@ func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
@@ -50,7 +50,7 @@ func (h *HeartbeatHandler) GetImportantBeats(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
@@ -69,7 +69,7 @@ func (h *HeartbeatHandler) GetIncidents(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 

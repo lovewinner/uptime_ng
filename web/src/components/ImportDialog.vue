@@ -18,8 +18,25 @@ const visible = computed({
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const strategy = ref<'skip' | 'overwrite' | 'copy'>('copy')
-const previewData = ref<any>(null)
-const importResult = ref<any>(null)
+interface ImportPreview {
+  new_count: number
+  conflict_count: number
+  new_tags: Array<{ name: string; color: string }>
+  notifications: number
+  masked_notifications: number
+  summary: string
+}
+
+interface ImportResult {
+  imported: number
+  created: number
+  updated: number
+  skipped: number
+  errors: string[]
+}
+
+const previewData = ref<ImportPreview | null>(null)
+const importResult = ref<ImportResult | null>(null)
 const loading = ref(false)
 const error = ref('')
 const step = ref<'upload' | 'preview' | 'result'>('upload')
@@ -37,8 +54,8 @@ function handleFileChange() {
       loading.value = true
       const res = await api.post('/monitors/import/preview', { data, strategy: 'skip' })
       previewData.value = res.data
-    } catch (err: any) {
-      error.value = typeof err === 'string' ? err : (err.message || '无效的JSON文件')
+    } catch (err: unknown) {
+      error.value = errorMessage(err, '无效的JSON文件')
     } finally {
       loading.value = false
     }
@@ -57,11 +74,21 @@ async function executeImport() {
     importResult.value = res.data
     step.value = 'result'
     emit('imported')
-  } catch (err: any) {
-    error.value = err.response?.data?.error || err.message || '导入失败'
+  } catch (err: unknown) {
+    error.value = errorMessage(err, '导入失败')
   } finally {
     loading.value = false
   }
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  if (typeof err === 'string') return err
+  if (typeof err === 'object' && err !== null && 'response' in err) {
+    const response = (err as { response?: { data?: { error?: string } } }).response
+    return response?.data?.error || fallback
+  }
+  if (err instanceof Error) return err.message || fallback
+  return fallback
 }
 
 function close() {
@@ -93,6 +120,18 @@ function close() {
             <el-radio value="overwrite">覆盖已有</el-radio>
             <el-radio value="copy">复制（添加后缀）</el-radio>
           </el-radio-group>
+          <el-alert v-if="strategy === 'overwrite'" title="覆盖会替换同名监控项配置、标签和通知关联" type="warning" show-icon :closable="false" style="margin-top:10px" />
+        </div>
+
+        <div v-if="previewData.notifications > 0" style="margin-top:10px">
+          <p>文件包含 <b>{{ previewData.notifications }}</b> 个通知配置</p>
+          <el-alert
+            v-if="previewData.masked_notifications > 0"
+            :title="`${previewData.masked_notifications} 个通知配置包含脱敏密钥，导入后需要手动补齐`"
+            type="warning"
+            show-icon
+            :closable="false"
+          />
         </div>
 
         <div v-if="previewData.new_tags && previewData.new_tags.length > 0" style="margin-top:10px">

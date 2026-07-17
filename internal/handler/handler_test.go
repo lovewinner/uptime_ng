@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -87,17 +88,60 @@ func setupRouter(t *testing.T, db *gorm.DB, scheduler MonitorScheduler) (*gin.En
 	auth := NewAuthHandler(db)
 	r.POST("/api/auth/register", auth.Register)
 	r.POST("/api/auth/login", auth.Login)
+	hub := NewWSHub()
+	go hub.Run()
+	r.GET("/api/ws", middleware.WSAuthRequired(), hub.HandleWebSocket)
 	api := r.Group("/api")
 	api.Use(middleware.AuthRequired())
 	monitor := NewMonitorHandler(db, scheduler)
+	api.GET("/monitors", monitor.List)
 	api.POST("/monitors", monitor.Create)
 	api.PUT("/monitors/:id", monitor.Update)
 	api.DELETE("/monitors/:id", monitor.Delete)
 	api.POST("/monitors/:id/resume", monitor.Resume)
 	api.POST("/monitors/:id/pause", monitor.Pause)
+	api.PATCH("/auth/users/:id", middleware.AdminRequired(), auth.UpdateUser)
 	ie := NewImportExportHandler(db, scheduler)
+	api.GET("/monitors/export", ie.ExportMonitors)
 	api.POST("/monitors/import", ie.ImportExecute)
+	notif := NewNotificationHandler(db)
+	api.POST("/notifications/:id/test", notif.Test)
+	sla := NewSLAHandler(db)
+	api.GET("/monitors/uptime/overall", sla.GetOverall)
 	return r, user
+}
+
+func TestUpdateUserProtectsLastAdminAndCanResetPassword(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	deactivateResp := authedRequest(t, r, http.MethodPatch, "/api/auth/users/1", gin.H{"active": false}, token)
+	if deactivateResp.Code != http.StatusBadRequest {
+		t.Fatalf("deactivate self code=%d body=%s", deactivateResp.Code, deactivateResp.Body.String())
+	}
+
+	role := model.RoleUser
+	demoteResp := authedRequest(t, r, http.MethodPatch, "/api/auth/users/1", gin.H{"role": role}, token)
+	if demoteResp.Code != http.StatusBadRequest {
+		t.Fatalf("demote last admin code=%d body=%s", demoteResp.Code, demoteResp.Body.String())
+	}
+
+	otherPassword, _ := model.HashPassword("old-password")
+	other := model.User{Username: "user", Password: otherPassword, Role: model.RoleUser, Active: true}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	resetResp := authedRequest(t, r, http.MethodPatch, "/api/auth/users/2", gin.H{"password": "new-password"}, token)
+	if resetResp.Code != http.StatusOK {
+		t.Fatalf("reset password code=%d body=%s", resetResp.Code, resetResp.Body.String())
+	}
+	var updated model.User
+	db.First(&updated, other.ID)
+	if !model.CheckPasswordHash("new-password", updated.Password) {
+		t.Fatalf("password was not updated")
+	}
 }
 
 func authedRequest(t *testing.T, r http.Handler, method, path string, body any, token string) *httptest.ResponseRecorder {
@@ -226,5 +270,99 @@ func TestMaskSensitive(t *testing.T) {
 	}
 	if !containsMaskedValue(masked) {
 		t.Fatalf("masked marker missing: %s", masked)
+	}
+}
+
+func TestWebSocketTokenAuth(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ws?token="+token, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("valid token should reach websocket upgrade, code=%d body=%s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/ws?token=bad", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("bad token code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestNotificationTestValidatesConfig(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+	notif := model.Notification{UserID: user.ID, Name: "bad", Type: "feishu", Config: `{}`, Active: true}
+	db.Create(&notif)
+
+	resp := authedRequest(t, r, http.MethodPost, "/api/notifications/1/test", nil, token)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("notification test code=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestOverallSLAPersistsReport(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	monitor := model.Monitor{UserID: user.ID, Name: "site", Type: "http", URL: "https://example.com", Active: true}
+	db.Create(&monitor)
+	now := time.Now()
+	ping := 10.0
+	db.Create(&model.Heartbeat{MonitorID: monitor.ID, Status: model.StatusUP, PingMS: &ping, Time: now.Add(-2 * time.Hour)})
+	db.Create(&model.Heartbeat{MonitorID: monitor.ID, Status: model.StatusDown, Time: now.Add(-1 * time.Hour)})
+
+	resp := authedRequest(t, r, http.MethodGet, "/api/monitors/uptime/overall?period=day", nil, token)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("sla code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var reports int64
+	db.Model(&model.SLAReport{}).Where("user_id = ?", user.ID).Count(&reports)
+	if reports != 1 {
+		t.Fatalf("reports=%d want 1", reports)
+	}
+}
+
+func TestImportExportUserIsolation(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	other := model.User{Username: "other", Password: "hash", Role: model.RoleUser, Active: true}
+	db.Create(&other)
+	ownMonitor := model.Monitor{UserID: user.ID, Name: "own", Type: "http", URL: "https://own", Active: true, AcceptedStatusCodes: `["200-299"]`}
+	otherMonitor := model.Monitor{UserID: other.ID, Name: "other", Type: "http", URL: "https://other", Active: true, AcceptedStatusCodes: `["200-299"]`}
+	db.Create(&ownMonitor)
+	db.Create(&otherMonitor)
+
+	exportResp := authedRequest(t, r, http.MethodGet, "/api/monitors/export", nil, token)
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("export code=%d body=%s", exportResp.Code, exportResp.Body.String())
+	}
+	var file ExportFile
+	json.Unmarshal(exportResp.Body.Bytes(), &file)
+	if len(file.Monitors) != 1 || file.Monitors[0].Name != "own" {
+		t.Fatalf("exported monitors=%+v", file.Monitors)
+	}
+
+	importResp := authedRequest(t, r, http.MethodPost, "/api/monitors/import", ImportRequest{
+		Strategy: "overwrite",
+		Data: ExportFile{Monitors: []ExportMonitor{{
+			Name: "other", Type: "http", URL: "https://new", Active: true, AcceptedStatusCodes: []string{"200-299"},
+		}}},
+	}, token)
+	if importResp.Code != http.StatusOK {
+		t.Fatalf("import code=%d body=%s", importResp.Code, importResp.Body.String())
+	}
+	var stillOther model.Monitor
+	db.First(&stillOther, otherMonitor.ID)
+	if stillOther.URL != "https://other" {
+		t.Fatalf("other user's monitor was modified: %s", stillOther.URL)
 	}
 }

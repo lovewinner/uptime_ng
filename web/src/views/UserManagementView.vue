@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import api from '@/api/http'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 interface User {
   id: number
@@ -25,14 +26,51 @@ async function fetchUsers() {
 }
 
 async function toggleActive(user: User) {
-  await api.patch(`/auth/users/${user.id}`, { active: !user.active })
-  await fetchUsers()
+  try {
+    await api.patch(`/auth/users/${user.id}`, { active: !user.active })
+    await fetchUsers()
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '操作失败'))
+  }
 }
 
 async function toggleRole(user: User) {
   const newRole = user.role === 'admin' ? 'user' : 'admin'
-  await api.patch(`/auth/users/${user.id}`, { role: newRole })
-  await fetchUsers()
+  try {
+    await api.patch(`/auth/users/${user.id}`, { role: newRole })
+    await fetchUsers()
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '操作失败'))
+  }
+}
+
+async function resetPassword(user: User) {
+  try {
+    const result = await ElMessageBox.prompt(`请输入 ${user.username} 的新密码`, '重置密码', {
+      inputType: 'password',
+      inputPattern: /^.{6,}$/,
+      inputErrorMessage: '密码至少 6 个字符',
+      confirmButtonText: '重置',
+      cancelButtonText: '取消',
+    })
+    await api.patch(`/auth/users/${user.id}`, { password: result.value })
+    ElMessage.success('密码已重置')
+  } catch (e: unknown) {
+    if (isCancel(e)) return
+    ElMessage.error(errorMessage(e, '重置失败'))
+  }
+}
+
+function errorMessage(e: unknown, fallback: string): string {
+  if (typeof e === 'object' && e !== null && 'response' in e) {
+    const response = (e as { response?: { data?: { error?: string } } }).response
+    return response?.data?.error || fallback
+  }
+  return fallback
+}
+
+function isCancel(e: unknown): boolean {
+  return e === 'cancel' || e === 'close'
 }
 
 onMounted(fetchUsers)
@@ -55,12 +93,13 @@ onMounted(fetchUsers)
           <el-tag :type="row.active ? 'success' : 'danger'" size="small">{{ row.active ? '启用' : '禁用' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="170">
+      <el-table-column label="操作" width="250">
         <template #default="{ row }">
           <el-button size="small" @click="toggleRole(row)">{{ row.role === 'admin' ? '降级' : '提升为管理员' }}</el-button>
           <el-button size="small" :type="row.active ? 'danger' : 'success'" @click="toggleActive(row)">
             {{ row.active ? '禁用' : '启用' }}
           </el-button>
+          <el-button size="small" @click="resetPassword(row)">重置密码</el-button>
         </template>
       </el-table-column>
     </el-table>

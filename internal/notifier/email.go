@@ -1,9 +1,12 @@
 package notifier
 
 import (
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/smtp"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -48,6 +51,10 @@ func (n *EmailNotifier) Send(subject, body string) error {
 	if n.SMTPHost == "" {
 		return fmt.Errorf("SMTP not configured")
 	}
+	recipients := splitRecipients(n.To)
+	if len(recipients) == 0 {
+		return fmt.Errorf("email recipient not configured")
+	}
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
 		n.From, n.To, subject, body)
@@ -55,7 +62,71 @@ func (n *EmailNotifier) Send(subject, body string) error {
 	addr := fmt.Sprintf("%s:%s", n.SMTPHost, uintToStr(n.SMTPPort))
 
 	auth := smtp.PlainAuth("", n.Username, n.Password, n.SMTPHost)
-	return smtp.SendMail(addr, auth, n.From, []string{n.To}, []byte(msg))
+	if n.SMTPPort == 465 {
+		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: n.SMTPHost})
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		client, err := smtp.NewClient(conn, n.SMTPHost)
+		if err != nil {
+			return err
+		}
+		defer client.Quit()
+		return sendWithClient(client, auth, n.From, recipients, []byte(msg))
+	}
+
+	client, err := smtp.Dial(addr)
+	if err != nil {
+		return err
+	}
+	defer client.Quit()
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: n.SMTPHost}); err != nil {
+			return err
+		}
+	}
+	return sendWithClient(client, auth, n.From, recipients, []byte(msg))
+}
+
+func sendWithClient(client *smtp.Client, auth smtp.Auth, from string, recipients []string, msg []byte) error {
+	if auth != nil {
+		if ok, _ := client.Extension("AUTH"); ok {
+			if err := client.Auth(auth); err != nil {
+				return err
+			}
+		}
+	}
+	if err := client.Mail(from); err != nil {
+		return err
+	}
+	for _, recipient := range recipients {
+		if err := client.Rcpt(recipient); err != nil {
+			return err
+		}
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := writer.Write(msg); err != nil {
+		writer.Close()
+		return err
+	}
+	return writer.Close()
+}
+
+func splitRecipients(raw string) []string {
+	raw = strings.ReplaceAll(raw, ";", ",")
+	parts := strings.Split(raw, ",")
+	recipients := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			recipients = append(recipients, part)
+		}
+	}
+	return recipients
 }
 
 func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) {
@@ -72,6 +143,18 @@ func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) 
 			continue
 		}
 		if notif.Type != "email" || !notif.Active {
+			continue
+		}
+		var configMap map[string]string
+		json.Unmarshal([]byte(notif.Config), &configMap)
+		to := configMap["email"]
+		if to == "" {
+			to = configMap["to"]
+		}
+		if cc := configMap["cc"]; cc != "" {
+			to += "," + cc
+		}
+		if strings.TrimSpace(to) == "" {
 			continue
 		}
 
@@ -92,7 +175,7 @@ func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) 
 			<p style="color:#999;font-size:12px">来自 uptime_ng 监控系统</p>
 		`, monitor.Name, monitor.Type, statusColor(isUp), statusText, msg)
 
-		n := NewEmailNotifierFromConfig("dummy")
+		n := NewEmailNotifierFromConfig(to)
 		if err := n.Send(subject, htmlBody); err != nil {
 			log.Printf("[email] failed to send: %v", err)
 		}

@@ -50,11 +50,27 @@ type CreateMonitorRequest struct {
 	BasicAuthUser         string   `json:"basic_auth_user"`
 	BasicAuthPass         string   `json:"basic_auth_pass"`
 	BearerToken           string   `json:"bearer_token"`
+	AuthWorkstation       string   `json:"auth_workstation"`
+	AuthDomain            string   `json:"auth_domain"`
+	TLSKey                string   `json:"tls_key"`
+	TLSCert               string   `json:"tls_cert"`
+	TLSCa                 string   `json:"tls_ca"`
+	OAuthClientID         string   `json:"oauth_client_id"`
+	OAuthClientSecret     string   `json:"oauth_client_secret"`
+	OAuthTokenURL         string   `json:"oauth_token_url"`
+	OAuthScopes           string   `json:"oauth_scopes"`
+	OAuthAuthMethod       string   `json:"oauth_auth_method"`
+	OAuthAudience         string   `json:"oauth_audience"`
 	DNSResolveType        string   `json:"dns_resolve_type"`
 	DNSResolveServer      string   `json:"dns_resolve_server"`
 	PacketSize            uint32   `json:"packet_size"`
 	ExpiryNotification    *bool    `json:"expiry_notification"`
 	HTTPBodyEncoding      string   `json:"http_body_encoding"`
+	RetryOnlyOnStatusCode bool     `json:"retry_only_on_status_code"`
+	CacheBust             bool     `json:"cache_bust"`
+	SaveResponse          bool     `json:"save_response"`
+	SaveErrorResponse     bool     `json:"save_error_response"`
+	ResponseMaxLength     uint32   `json:"response_max_length"`
 	PingNumeric           bool     `json:"ping_numeric"`
 	PingCount             uint32   `json:"ping_count"`
 	PingPerRequestTimeout uint32   `json:"ping_per_request_timeout"`
@@ -68,7 +84,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 
 	var req CreateMonitorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 	if req.Interval < model.MinInterval {
@@ -76,6 +92,12 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 	}
 	if req.Timeout <= 0 {
 		req.Timeout = model.DefaultTimeout
+	}
+	if req.ResponseMaxLength == 0 {
+		req.ResponseMaxLength = model.DefaultResponseMaxLen
+	}
+	if req.MaxRedirects == 0 {
+		req.MaxRedirects = model.DefaultHTTPMaxRedirects
 	}
 
 	var acceptedStatusCodesJSON string
@@ -118,11 +140,27 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		BasicAuthUser:         req.BasicAuthUser,
 		BasicAuthPass:         req.BasicAuthPass,
 		BearerToken:           req.BearerToken,
+		AuthWorkstation:       req.AuthWorkstation,
+		AuthDomain:            req.AuthDomain,
+		TLSKey:                req.TLSKey,
+		TLSCert:               req.TLSCert,
+		TLSCa:                 req.TLSCa,
+		OAuthClientID:         req.OAuthClientID,
+		OAuthClientSecret:     req.OAuthClientSecret,
+		OAuthTokenURL:         req.OAuthTokenURL,
+		OAuthScopes:           req.OAuthScopes,
+		OAuthAuthMethod:       req.OAuthAuthMethod,
+		OAuthAudience:         req.OAuthAudience,
 		DNSResolveType:        req.DNSResolveType,
 		DNSResolveServer:      req.DNSResolveServer,
 		PacketSize:            req.PacketSize,
 		ExpiryNotification:    expiryNotification,
 		HTTPBodyEncoding:      req.HTTPBodyEncoding,
+		RetryOnlyOnStatusCode: req.RetryOnlyOnStatusCode,
+		CacheBust:             req.CacheBust,
+		SaveResponse:          req.SaveResponse,
+		SaveErrorResponse:     req.SaveErrorResponse,
+		ResponseMaxLength:     req.ResponseMaxLength,
 		PingNumeric:           req.PingNumeric,
 		PingCount:             req.PingCount,
 		PingPerRequestTimeout: req.PingPerRequestTimeout,
@@ -138,7 +176,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 
 	if err := tx.Create(&monitor).Error; err != nil {
 		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "monitor_create_failed", err.Error())
 		return
 	}
 
@@ -165,7 +203,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "monitor_create_commit_failed", err.Error())
 		return
 	}
 
@@ -215,7 +253,7 @@ func (h *MonitorHandler) Get(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
@@ -246,13 +284,13 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
 	var req CreateMonitorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		badRequest(c, "invalid_request", err.Error())
 		return
 	}
 	if req.Interval < model.MinInterval {
@@ -260,6 +298,12 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	}
 	if req.Timeout <= 0 {
 		req.Timeout = model.DefaultTimeout
+	}
+	if req.ResponseMaxLength == 0 {
+		req.ResponseMaxLength = model.DefaultResponseMaxLen
+	}
+	if req.MaxRedirects == 0 {
+		req.MaxRedirects = model.DefaultHTTPMaxRedirects
 	}
 
 	monitor.Name = req.Name
@@ -280,6 +324,17 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	monitor.BasicAuthUser = req.BasicAuthUser
 	monitor.BasicAuthPass = req.BasicAuthPass
 	monitor.BearerToken = req.BearerToken
+	monitor.AuthWorkstation = req.AuthWorkstation
+	monitor.AuthDomain = req.AuthDomain
+	monitor.TLSKey = req.TLSKey
+	monitor.TLSCert = req.TLSCert
+	monitor.TLSCa = req.TLSCa
+	monitor.OAuthClientID = req.OAuthClientID
+	monitor.OAuthClientSecret = req.OAuthClientSecret
+	monitor.OAuthTokenURL = req.OAuthTokenURL
+	monitor.OAuthScopes = req.OAuthScopes
+	monitor.OAuthAuthMethod = req.OAuthAuthMethod
+	monitor.OAuthAudience = req.OAuthAudience
 	monitor.IgnoreTLS = req.IgnoreTLS
 	monitor.UpsideDown = req.UpsideDown
 	monitor.Keyword = req.Keyword
@@ -288,6 +343,15 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	monitor.DNSResolveType = req.DNSResolveType
 	monitor.DNSResolveServer = req.DNSResolveServer
 	monitor.PacketSize = req.PacketSize
+	if req.ExpiryNotification != nil {
+		monitor.ExpiryNotification = *req.ExpiryNotification
+	}
+	monitor.HTTPBodyEncoding = req.HTTPBodyEncoding
+	monitor.RetryOnlyOnStatusCode = req.RetryOnlyOnStatusCode
+	monitor.CacheBust = req.CacheBust
+	monitor.SaveResponse = req.SaveResponse
+	monitor.SaveErrorResponse = req.SaveErrorResponse
+	monitor.ResponseMaxLength = req.ResponseMaxLength
 	monitor.PingNumeric = req.PingNumeric
 	monitor.PingCount = req.PingCount
 	monitor.PingPerRequestTimeout = req.PingPerRequestTimeout
@@ -300,7 +364,7 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	tx := h.DB.Begin()
 	if err := tx.Save(&monitor).Error; err != nil {
 		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "monitor_update_failed", err.Error())
 		return
 	}
 
@@ -332,7 +396,7 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "monitor_update_commit_failed", err.Error())
 		return
 	}
 
@@ -353,7 +417,7 @@ func (h *MonitorHandler) Delete(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
@@ -367,7 +431,7 @@ func (h *MonitorHandler) Delete(c *gin.Context) {
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.Incident{})
 	tx.Delete(&monitor)
 	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "monitor_delete_failed", err.Error())
 		return
 	}
 
@@ -384,11 +448,11 @@ func (h *MonitorHandler) Resume(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 	if err := h.DB.Model(&monitor).Update("active", true).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "monitor_resume_failed", err.Error())
 		return
 	}
 	monitor.Active = true
@@ -404,11 +468,11 @@ func (h *MonitorHandler) Pause(c *gin.Context) {
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 	if err := h.DB.Model(&monitor).Update("active", false).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errorResponse(c, http.StatusInternalServerError, "monitor_pause_failed", err.Error())
 		return
 	}
 	if h.Scheduler != nil {

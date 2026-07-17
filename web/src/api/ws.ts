@@ -4,7 +4,7 @@ import type { WSMessage } from '@/api/types'
 export class WSClient {
   private ws: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private messageHandler: ((msg: WSMessage) => void) | null = null
+  private messageHandlers = new Set<(msg: WSMessage) => void>()
   private manuallyClosed = false
 
   connect() {
@@ -37,9 +37,7 @@ export class WSClient {
     this.ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data) as WSMessage
-        if (this.messageHandler) {
-          this.messageHandler(msg)
-        }
+        this.messageHandlers.forEach((handler) => handler(msg))
       } catch {
         // ignore
       }
@@ -58,8 +56,9 @@ export class WSClient {
     }
   }
 
-  onMessage(handler: (msg: WSMessage) => void) {
-    this.messageHandler = handler
+  onMessage(handler: (msg: WSMessage) => void): () => void {
+    this.messageHandlers.add(handler)
+    return () => this.messageHandlers.delete(handler)
   }
 
   private scheduleReconnect() {

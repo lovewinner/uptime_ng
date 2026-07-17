@@ -15,12 +15,12 @@ type FeishuNotifier struct {
 }
 
 type FeishuCardMessage struct {
-	MsgType string          `json:"msg_type"`
-	Card    FeishuCard      `json:"card"`
+	MsgType string     `json:"msg_type"`
+	Card    FeishuCard `json:"card"`
 }
 
 type FeishuCard struct {
-	Header   FeishuCardHeader   `json:"header"`
+	Header   FeishuCardHeader    `json:"header"`
 	Elements []FeishuCardElement `json:"elements"`
 }
 
@@ -35,8 +35,8 @@ type FeishuCardTitle struct {
 }
 
 type FeishuCardElement struct {
-	Tag     string            `json:"tag"`
-	Text    *FeishuCardText   `json:"text,omitempty"`
+	Tag     string             `json:"tag"`
+	Text    *FeishuCardText    `json:"text,omitempty"`
 	Fields  []FeishuCardField  `json:"fields,omitempty"`
 	Actions []FeishuCardAction `json:"actions,omitempty"`
 }
@@ -52,10 +52,10 @@ type FeishuCardField struct {
 }
 
 type FeishuCardAction struct {
-	Tag   string          `json:"tag"`
-	Text  FeishuCardText  `json:"text"`
-	URL   string          `json:"url"`
-	Type  string          `json:"type"`
+	Tag   string            `json:"tag"`
+	Text  FeishuCardText    `json:"text"`
+	URL   string            `json:"url"`
+	Type  string            `json:"type"`
 	Value map[string]string `json:"value"`
 }
 
@@ -150,7 +150,7 @@ func (n *FeishuNotifier) post(msg interface{}) error {
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil // assume success
+		return fmt.Errorf("feishu api returned invalid json: %s", string(respBody))
 	}
 
 	code, ok := result["code"].(float64)

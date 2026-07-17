@@ -74,8 +74,11 @@ function getIntervalText(seconds: number): string {
 }
 
 onMounted(async () => {
-  await store.fetchMonitors()
-  await store.fetchStatus()
+  await Promise.all([
+    store.fetchMonitors(),
+    store.fetchStatus(),
+    store.fetchNotifications(),
+  ])
 })
 
 async function handleExport(ids?: number[]) {
@@ -118,7 +121,7 @@ function handleImported() {
       v-loading="store.loading"
       stripe
       style="width: 100%"
-      @row-click="(row: any) => goDetail(row.id)"
+      @row-click="(row: Monitor) => goDetail(row.id)"
     >
       <el-table-column label="名称" min-width="150">
         <template #default="{ row }">

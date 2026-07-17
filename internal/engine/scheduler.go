@@ -165,6 +165,10 @@ func (r *MonitorRunner) beat() {
 	if monitor.UpsideDown {
 		result.Status = model.FlipStatus(result.Status)
 	}
+	if monitor.Type == model.MonitorTypeDNS {
+		r.DB.Model(&model.Monitor{}).Where("id = ?", monitor.ID).Update("dns_last_result", result.Msg)
+		monitor.DNSLastResult = result.Msg
+	}
 
 	now := time.Now()
 
@@ -190,7 +194,8 @@ func (r *MonitorRunner) beat() {
 	beat.Retries = previousBeat.Retries
 
 	if result.Status == model.StatusDown {
-		if monitor.MaxRetries > 0 && beat.Retries < monitor.MaxRetries {
+		canRetry := !monitor.RetryOnlyOnStatusCode || result.HTTPStatus > 0
+		if canRetry && monitor.MaxRetries > 0 && beat.Retries < monitor.MaxRetries {
 			beat.Retries++
 			beat.Status = model.StatusPending
 		}
@@ -206,7 +211,8 @@ func (r *MonitorRunner) beat() {
 		beat.DownCount = 0
 		r.sendNotification(isFirstBeat, previousStatus, beat)
 	} else if beat.Status == model.StatusDown && monitor.ResendInterval > 0 {
-		if beat.DownCount >= monitor.ResendInterval {
+		if r.shouldResendDownNotification(now, monitor.ResendInterval) {
+			beat.Important = true
 			r.sendNotification(isFirstBeat, previousStatus, beat)
 			beat.DownCount = 0
 		}
@@ -219,6 +225,17 @@ func (r *MonitorRunner) beat() {
 	if r.Publisher != nil {
 		r.Publisher.SendToUser(monitor.UserID, "heartbeat", beat)
 	}
+}
+
+func (r *MonitorRunner) shouldResendDownNotification(now time.Time, resendInterval uint32) bool {
+	var lastImportant model.Heartbeat
+	err := r.DB.Where("monitor_id = ? AND important = ? AND status = ?", r.Monitor.ID, true, model.StatusDown).
+		Order("time DESC").
+		First(&lastImportant).Error
+	if err != nil || lastImportant.ID == 0 {
+		return true
+	}
+	return now.Sub(lastImportant.Time) >= time.Duration(resendInterval)*time.Second
 }
 
 func (r *MonitorRunner) sendNotification(isFirstBeat bool, prevStatus uint16, beat model.Heartbeat) {

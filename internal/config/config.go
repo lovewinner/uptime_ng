@@ -31,8 +31,14 @@ type DatabaseConfig struct {
 }
 
 type JWTConfig struct {
-	Secret    string
+	Secret      string
 	ExpireHours int
+}
+
+const DefaultJWTSecret = "change-me-in-production"
+
+func (j JWTConfig) UsesDefaultSecret() bool {
+	return strings.TrimSpace(j.Secret) == "" || j.Secret == DefaultJWTSecret
 }
 
 type SMTPConfig struct {
@@ -95,7 +101,7 @@ func Load() error {
 	viper.SetDefault("database.password", "uptime123")
 	viper.SetDefault("database.dbname", "uptime_ng")
 	viper.SetDefault("database.sslmode", "disable")
-	viper.SetDefault("jwt.secret", "change-me-in-production")
+	viper.SetDefault("jwt.secret", DefaultJWTSecret)
 	viper.SetDefault("jwt.expirehours", 72)
 	viper.SetDefault("smtp.host", "")
 	viper.SetDefault("smtp.port", 587)

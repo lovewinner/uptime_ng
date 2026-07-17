@@ -1,10 +1,21 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouter } from 'vue-router'
 
 const store = useMonitorStore()
 const router = useRouter()
+
+const totalCount = computed(() => store.statusList.length)
+const upCount = computed(() => store.statusList.filter((s) => s.status === 1).length)
+const downCount = computed(() => store.statusList.filter((s) => s.status === 0).length)
+const pendingCount = computed(() => store.statusList.filter((s) => s.status === 2).length)
+const currentFaults = computed(() => store.statusList.filter((s) => s.status === 0 || s.status === 2))
+const avgPing = computed(() => {
+  const values = store.statusList.map((s) => s.ping_ms).filter((v) => v > 0)
+  if (values.length === 0) return 0
+  return values.reduce((sum, v) => sum + v, 0) / values.length
+})
 
 onMounted(async () => {
   await store.fetchStatus()
@@ -23,8 +34,12 @@ function uptimePercent(v: number) {
   <div>
     <h2>仪表盘</h2>
 
-    <div style="margin-bottom: 20px; display: flex; gap: 15px">
-      <el-statistic-card value="待加载" title="监控项总数" />
+    <div style="margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center">
+      <el-statistic title="监控项总数" :value="totalCount" />
+      <el-statistic title="UP" :value="upCount" />
+      <el-statistic title="DOWN" :value="downCount" />
+      <el-statistic title="PENDING" :value="pendingCount" />
+      <el-statistic title="平均响应(ms)" :value="Number(avgPing.toFixed(0))" />
       <el-button type="primary" @click="router.push('/monitors')" style="margin-left: auto">管理监控项</el-button>
     </div>
 
@@ -51,6 +66,32 @@ function uptimePercent(v: number) {
         </el-card>
       </el-col>
     </el-row>
+
+    <el-card v-if="currentFaults.length > 0" shadow="never" style="margin-top: 8px">
+      <template #header>
+        <span>当前故障</span>
+      </template>
+      <el-table :data="currentFaults" size="small" stripe>
+        <el-table-column prop="name" label="监控项" min-width="160" />
+        <el-table-column prop="type" label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="store.statusColor(row.status)" size="small" effect="dark">
+              {{ store.statusText(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="响应" width="110">
+          <template #default="{ row }">
+            {{ row.ping_ms ? row.ping_ms.toFixed(0) + ' ms' : '-' }}
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
     <el-empty v-if="store.statusList.length === 0" description="暂无监控项，请先创建" />
   </div>

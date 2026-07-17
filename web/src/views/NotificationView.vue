@@ -80,8 +80,8 @@ async function handleTest(notif: Notification) {
   try {
     const res = await api.post(`/notifications/${notif.id}/test`)
     ElMessage.success(res.data?.message || '测试消息已发送')
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '测试失败')
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '测试失败'))
   }
 }
 
@@ -107,11 +107,19 @@ async function handleSubmit() {
     dialogVisible.value = false
     ElMessage.success(isEdit.value ? '已更新' : '已创建')
     await fetchNotifications()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '保存失败')
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '保存失败'))
   } finally {
     saving.value = false
   }
+}
+
+function errorMessage(e: unknown, fallback: string): string {
+  if (typeof e === 'object' && e !== null && 'response' in e) {
+    const response = (e as { response?: { data?: { error?: string } } }).response
+    return response?.data?.error || fallback
+  }
+  return fallback
 }
 
 onMounted(() => {

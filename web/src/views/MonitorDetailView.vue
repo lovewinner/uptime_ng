@@ -8,6 +8,9 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart, BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
+import { wsClient } from '@/api/ws'
+import type { Heartbeat, Incident, UptimeDataPoint, UptimeSummary } from '@/api/types'
+import type { Monitor } from '@/stores/monitor'
 
 use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -18,6 +21,7 @@ const monitorId = computed(() => Number(route.params.id))
 const windowWidth = ref(window.innerWidth)
 let beatsObserver: ResizeObserver | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+let unsubscribeWS: (() => void) | null = null
 
 function onResize() {
   windowWidth.value = window.innerWidth
@@ -27,24 +31,29 @@ onUnmounted(() => {
   window.removeEventListener('resize', onResize)
   beatsObserver?.disconnect()
   if (refreshTimer) clearInterval(refreshTimer)
+  unsubscribeWS?.()
 })
 
 const descColumns = computed(() => windowWidth.value < 640 ? 1 : windowWidth.value < 1024 ? 2 : 3)
 
-const monitor = ref<any>(null)
-const incidentList = ref<any[]>([])
-const pingChartData = ref<any[]>([])
-const uptimeChartData = ref<any[]>([])
+const monitor = ref<Monitor | null>(null)
+const currentStatus = computed(() => {
+  if (!monitor.value) return 2
+  return store.statusList.find((s) => s.id === monitor.value?.id)?.status ?? 2
+})
+const incidentList = ref<Incident[]>([])
+const pingChartData = ref<UptimeDataPoint[]>([])
+const uptimeChartData = ref<UptimeDataPoint[]>([])
 const loading = ref(false)
-const uptimeSummary = ref({ uptime_24h: 0, uptime_30d: 0, uptime_1y: 0 })
+const uptimeSummary = ref<UptimeSummary>({ uptime_24h: 0, uptime_30d: 0, uptime_1y: 0 })
 
 function uptimePercent(v: number): string {
   return (v * 100).toFixed(2) + '%'
 }
 
-const beatsContainer = ref<any | null>(null)
+const beatsContainer = ref<{ $el?: HTMLElement } | null>(null)
 const containerWidth = ref(0)
-const allBeats = ref<any[]>([])
+const allBeats = ref<Heartbeat[]>([])
 const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 14)))
 const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
 
@@ -74,8 +83,8 @@ const pingChartOption = computed(() => ({
       name: '最大响应',
       type: 'line',
       data: pingChartData.value
-        .filter((d: any) => d.up > 0)
-        .map((d: any) => [new Date(d.timestamp * 1000), d.max_ping !== undefined ? Number(d.max_ping) : 0]),
+        .filter((d) => d.up > 0)
+        .map((d) => [new Date(d.timestamp * 1000), d.max_ping !== undefined ? Number(d.max_ping) : 0]),
       smooth: true,
       symbol: 'circle',
     },
@@ -83,8 +92,8 @@ const pingChartOption = computed(() => ({
       name: '平均响应',
       type: 'line',
       data: pingChartData.value
-        .filter((d: any) => d.up > 0)
-        .map((d: any) => [new Date(d.timestamp * 1000), d.avg_ping !== undefined ? Number(d.avg_ping) : 0]),
+        .filter((d) => d.up > 0)
+        .map((d) => [new Date(d.timestamp * 1000), d.avg_ping !== undefined ? Number(d.avg_ping) : 0]),
       smooth: true,
       areaStyle: { opacity: 0.1 },
       symbol: 'circle',
@@ -93,8 +102,8 @@ const pingChartOption = computed(() => ({
       name: '最小响应',
       type: 'line',
       data: pingChartData.value
-        .filter((d: any) => d.up > 0)
-        .map((d: any) => [new Date(d.timestamp * 1000), d.min_ping !== undefined ? Number(d.min_ping) : 0]),
+        .filter((d) => d.up > 0)
+        .map((d) => [new Date(d.timestamp * 1000), d.min_ping !== undefined ? Number(d.min_ping) : 0]),
       smooth: true,
       symbol: 'circle',
     },
@@ -102,7 +111,7 @@ const pingChartOption = computed(() => ({
 }))
 
 const uptimeChartOption = computed(() => ({
-  tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].name}<br/>可用率: ${(p[0].value[1] * 100).toFixed(2)}%` },
+  tooltip: { trigger: 'axis' },
   grid: { left: 50, right: 20, top: 30, bottom: 30 },
   xAxis: {
     type: 'time',
@@ -117,12 +126,12 @@ const uptimeChartOption = computed(() => ({
     {
       name: '可用率',
       type: 'bar',
-      data: uptimeChartData.value.map((d: any) => [
+      data: uptimeChartData.value.map((d) => [
         new Date(d.timestamp * 1000),
         d.uptime !== undefined ? Number(d.uptime) : 0,
       ]),
       itemStyle: {
-        color: (params: any) => params.value[1] > 0.99 ? '#67C23A' : params.value[1] > 0.95 ? '#E6A23C' : '#F56C6C',
+        color: (params: { value: [Date, number] }) => params.value[1] > 0.99 ? '#67C23A' : params.value[1] > 0.95 ? '#E6A23C' : '#F56C6C',
       },
     },
   ],
@@ -162,6 +171,12 @@ onMounted(async () => {
     uptimeChartData.value = uptimeRes.data || []
     uptimeSummary.value = summaryRes.data || {}
     await loadBeats()
+    unsubscribeWS = wsClient.onMessage((msg) => {
+      if (msg.type !== 'heartbeat') return
+      const beat = msg.payload as Heartbeat
+      if (beat.monitor_id !== id) return
+      allBeats.value = [...allBeats.value.filter((item) => item.id !== beat.id), beat].slice(-500)
+    })
     const interval = monitor.value?.interval
     if (interval && interval > 0) {
       refreshTimer = setInterval(() => loadBeats(), interval * 1000)
@@ -208,12 +223,8 @@ onMounted(async () => {
           {{ monitor.timeout }}s
         </el-descriptions-item>
         <el-descriptions-item label="状态">
-          <el-tag :type="store.statusColor(
-            store.statusList.find(s => s.id === monitor.id)?.status ?? 2
-          )" size="small" effect="dark">
-            {{ store.statusText(
-              store.statusList.find(s => s.id === monitor.id)?.status ?? 2
-            ) }}
+          <el-tag :type="store.statusColor(currentStatus)" size="small" effect="dark">
+            {{ store.statusText(currentStatus) }}
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item v-if="monitor.type === 'ping'" label="在线时间 (24 小时)">
