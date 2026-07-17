@@ -40,7 +40,7 @@ const loading = ref(false)
 const beatsContainer = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
 const allBeats = ref<any[]>([])
-const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 14)))
+const beatCount = computed(() => Math.max(10, Math.floor((containerWidth.value || 0) / 14)))
 const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
 
 async function loadBeats() {
