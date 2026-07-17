@@ -1,6 +1,7 @@
 # Binaries
 uptime_ng
 uptime_ng.exe
+server
 
 # Frontend build
 dist/
@@ -36,6 +37,14 @@ vendor/
 # OS
 .DS_Store
 Thumbs.db
+
+# Playwright screenshots & logs
+.playwright-mcp/
+*.png
+!web/src/**/*.png
+
+# Temp server logs
+server.log
 
 # Test data
 test/data/
