@@ -2,6 +2,8 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -20,7 +22,10 @@ func NewHeartbeatHandler(db *gorm.DB) *HeartbeatHandler {
 func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	monitorID := c.Param("id")
-	period := c.DefaultQuery("period", "3600") // default 1h in seconds
+	period := parseInt(c.DefaultQuery("period", "3600")) // default 1h in seconds
+	if period <= 0 {
+		period = 3600
+	}
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
@@ -29,8 +34,9 @@ func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
 	}
 
 	var beats []model.Heartbeat
+	cutoff := time.Now().Add(-time.Duration(period) * time.Second)
 	h.DB.Where("monitor_id = ?", monitorID).
-		Where("time > NOW() - make_interval(secs := ?)", period).
+		Where("time > ?", cutoff).
 		Order("time ASC").
 		Find(&beats)
 
@@ -80,13 +86,13 @@ func (h *HeartbeatHandler) GetRecentStatus(c *gin.Context) {
 	userID := c.GetUint("user_id")
 
 	type statusItem struct {
-		ID              uint    `json:"id"`
-		Name            string  `json:"name"`
-		Type            string  `json:"type"`
-		Status          uint16  `json:"status"`
-		PingMS          float64 `json:"ping_ms"`
-		Uptime24H       float64 `json:"uptime_24h"`
-		Active          bool    `json:"active"`
+		ID        uint    `json:"id"`
+		Name      string  `json:"name"`
+		Type      string  `json:"type"`
+		Status    uint16  `json:"status"`
+		PingMS    float64 `json:"ping_ms"`
+		Uptime24H float64 `json:"uptime_24h"`
+		Active    bool    `json:"active"`
 	}
 
 	var monitors []model.Monitor
@@ -110,20 +116,21 @@ func (h *HeartbeatHandler) GetRecentStatus(c *gin.Context) {
 			}
 		}
 
-		results[i].Uptime24H = 1.0
+		var up, down int64
+		cutoff := time.Now().Add(-24 * time.Hour)
+		h.DB.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", m.ID, cutoff, model.StatusUP).Count(&up)
+		h.DB.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", m.ID, cutoff, model.StatusDown).Count(&down)
+		if up+down > 0 {
+			results[i].Uptime24H = float64(up) / float64(up+down)
+		} else {
+			results[i].Uptime24H = 1.0
+		}
 	}
 
 	c.JSON(http.StatusOK, results)
 }
 
 func parseInt(s string) int {
-	var n int
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			n = n*10 + int(c-'0')
-		} else {
-			break
-		}
-	}
+	n, _ := strconv.Atoi(s)
 	return n
 }

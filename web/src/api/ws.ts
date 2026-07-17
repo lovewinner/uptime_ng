@@ -1,29 +1,42 @@
 import { useAuthStore } from '@/stores/auth'
+import type { WSMessage } from '@/api/types'
 
 export class WSClient {
   private ws: WebSocket | null = null
-  private reconnectTimer: any = null
-  private messageHandler: ((msg: any) => void) | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private messageHandler: ((msg: WSMessage) => void) | null = null
+  private manuallyClosed = false
 
   connect() {
     const auth = useAuthStore()
     if (!auth.token) return
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return
+    this.manuallyClosed = false
 
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${window.location.host}/api/ws?token=${auth.token}`
+    const url = `${proto}://${window.location.host}/api/ws?token=${encodeURIComponent(auth.token)}`
 
     this.ws = new WebSocket(url)
 
-    this.ws.onopen = () => console.log('[WS] connected')
-    this.ws.onclose = () => {
-      console.log('[WS] disconnected, reconnecting in 5s...')
-      this.scheduleReconnect()
+    this.ws.onopen = () => {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = null
+      }
     }
-    this.ws.onerror = (e) => console.error('[WS] error', e)
+    this.ws.onclose = () => {
+      this.ws = null
+      if (!this.manuallyClosed) {
+        this.scheduleReconnect()
+      }
+    }
+    this.ws.onerror = () => {
+      this.ws?.close()
+    }
 
     this.ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data)
+        const msg = JSON.parse(event.data) as WSMessage
         if (this.messageHandler) {
           this.messageHandler(msg)
         }
@@ -34,6 +47,7 @@ export class WSClient {
   }
 
   disconnect() {
+    this.manuallyClosed = true
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -44,12 +58,14 @@ export class WSClient {
     }
   }
 
-  onMessage(handler: (msg: any) => void) {
+  onMessage(handler: (msg: WSMessage) => void) {
     this.messageHandler = handler
   }
 
   private scheduleReconnect() {
+    if (this.reconnectTimer) return
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
       this.connect()
     }, 5000)
   }

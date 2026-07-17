@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -86,8 +87,11 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 	}
 
 	var incCount int64
-	h.DB.Model(&model.Incident{}).Where("monitor_id = ?", monitorID).Where("started_at >= to_timestamp(?)", cutoff).Count(&incCount)
+	h.DB.Model(&model.Incident{}).Where("monitor_id = ?", monitorID).Where("started_at >= ?", time.Unix(cutoff, 0)).Count(&incCount)
 	result.Incidents = uint32(incCount)
+	var incidents []model.Incident
+	h.DB.Where("monitor_id = ?", monitorID).Where("started_at >= ?", time.Unix(cutoff, 0)).Find(&incidents)
+	result.TotalDowntimeSec = sumDowntime(incidents)
 
 	c.JSON(http.StatusOK, result)
 }
@@ -115,11 +119,11 @@ func (h *SLAHandler) GetOverall(c *gin.Context) {
 			totalPing += s.AvgPing * float64(s.Up)
 		}
 		result := SLAResult{
-			MonitorID:     m.ID,
-			MonitorName:   m.Name,
-			MonitorType:   m.Type,
-			TotalChecks:   totalUP + totalDown,
-			FailedChecks:  totalDown,
+			MonitorID:    m.ID,
+			MonitorName:  m.Name,
+			MonitorType:  m.Type,
+			TotalChecks:  totalUP + totalDown,
+			FailedChecks: totalDown,
 		}
 		if result.TotalChecks > 0 {
 			result.UptimePercentage = float64(totalUP) / float64(result.TotalChecks)
@@ -129,6 +133,12 @@ func (h *SLAHandler) GetOverall(c *gin.Context) {
 		if totalUP > 0 {
 			result.AvgPingMS = totalPing / float64(totalUP)
 		}
+		var incCount int64
+		h.DB.Model(&model.Incident{}).Where("monitor_id = ? AND started_at >= ?", m.ID, time.Unix(cutoff, 0)).Count(&incCount)
+		result.Incidents = uint32(incCount)
+		var incidents []model.Incident
+		h.DB.Where("monitor_id = ? AND started_at >= ?", m.ID, time.Unix(cutoff, 0)).Find(&incidents)
+		result.TotalDowntimeSec = sumDowntime(incidents)
 		results[i] = result
 	}
 
@@ -229,13 +239,21 @@ func timeNowUnix() int64 {
 }
 
 func atoi(s string) int {
-	var n int
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			n = n*10 + int(c-'0')
-		} else {
-			break
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+func sumDowntime(incidents []model.Incident) uint32 {
+	var total uint32
+	now := time.Now()
+	for _, incident := range incidents {
+		if incident.DurationSec > 0 {
+			total += incident.DurationSec
+			continue
+		}
+		if incident.EndedAt == nil {
+			total += uint32(now.Sub(incident.StartedAt).Seconds())
 		}
 	}
-	return n
+	return total
 }

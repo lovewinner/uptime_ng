@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import api from '@/api/http'
 import { wsClient } from '@/api/ws'
+import type { Heartbeat, Monitor as ApiMonitor, MonitorListItem, MonitorPayload, Notification } from '@/api/types'
 
 export interface MonitorStatus {
   id: number
@@ -13,39 +14,7 @@ export interface MonitorStatus {
   active: boolean
 }
 
-export interface Monitor {
-  id: number
-  user_id: number
-  name: string
-  description: string
-  type: string
-  active: boolean
-  url: string
-  hostname: string
-  port: number
-  method: string
-  interval: number
-  timeout: number
-  max_retries: number
-  retry_interval: number
-  resend_interval: number
-  keyword: string
-  invert_keyword: boolean
-  ignore_tls: boolean
-  upside_down: boolean
-  max_redirects: number
-  accepted_status_codes: string[]
-  tags: { id: number; name: string; color: string }[]
-  notification_ids: number[]
-}
-
-export interface Notification {
-  id: number
-  name: string
-  type: string
-  config: string
-  active: boolean
-}
+export type Monitor = Omit<ApiMonitor, 'accepted_status_codes'> & { accepted_status_codes: string[] }
 
 export const useMonitorStore = defineStore('monitor', () => {
   const statusList = reactive<MonitorStatus[]>([])
@@ -55,7 +24,7 @@ export const useMonitorStore = defineStore('monitor', () => {
 
   wsClient.onMessage((msg) => {
     if (msg.type === 'heartbeat' && msg.payload) {
-      const beat = msg.payload
+      const beat = msg.payload as Heartbeat
       const idx = statusList.findIndex((s) => s.id === beat.monitor_id)
       if (idx >= 0 && statusList[idx]) {
         statusList[idx]!.status = beat.status
@@ -77,8 +46,8 @@ export const useMonitorStore = defineStore('monitor', () => {
     loading.value = true
     try {
       const res = await api.get('/monitors')
-      const data = res.data as any[]
-      monitors.value = data.map((item: any) => ({
+      const data = res.data as MonitorListItem[]
+      monitors.value = data.map((item) => ({
         ...item.monitor,
         tags: item.tags || [],
         notification_ids: item.notification_ids || [],
@@ -98,14 +67,14 @@ export const useMonitorStore = defineStore('monitor', () => {
     }
   }
 
-  async function createMonitor(monitor: any) {
+  async function createMonitor(monitor: MonitorPayload) {
     const res = await api.post('/monitors', monitor)
     await fetchMonitors()
     await fetchStatus()
     return res.data
   }
 
-  async function updateMonitor(id: number, monitor: any) {
+  async function updateMonitor(id: number, monitor: MonitorPayload) {
     await api.put(`/monitors/${id}`, monitor)
     await fetchMonitors()
     await fetchStatus()

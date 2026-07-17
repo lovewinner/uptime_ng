@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,54 +13,55 @@ import (
 )
 
 type ImportExportHandler struct {
-	DB *gorm.DB
+	DB        *gorm.DB
+	Scheduler MonitorScheduler
 }
 
-func NewImportExportHandler(db *gorm.DB) *ImportExportHandler {
-	return &ImportExportHandler{DB: db}
+func NewImportExportHandler(db *gorm.DB, scheduler MonitorScheduler) *ImportExportHandler {
+	return &ImportExportHandler{DB: db, Scheduler: scheduler}
 }
 
 type ExportFile struct {
-	Version    string           `json:"version"`
-	ExportedAt string           `json:"exported_at"`
-	ExportedBy string           `json:"exported_by"`
-	Monitors   []ExportMonitor  `json:"monitors"`
+	Version       string               `json:"version"`
+	ExportedAt    string               `json:"exported_at"`
+	ExportedBy    string               `json:"exported_by"`
+	Monitors      []ExportMonitor      `json:"monitors"`
 	Notifications []ExportNotification `json:"notifications"`
 }
 
 type ExportMonitor struct {
-	Name                  string   `json:"name"`
-	Description           string   `json:"description"`
-	Type                  string   `json:"type"`
-	Active                bool     `json:"active"`
-	URL                   string   `json:"url"`
-	Hostname              string   `json:"hostname"`
-	Port                  uint16   `json:"port"`
-	Method                string   `json:"method"`
-	Interval              uint32   `json:"interval"`
-	Timeout               float64  `json:"timeout"`
-	MaxRetries            uint32   `json:"max_retries"`
-	RetryInterval         uint32   `json:"retry_interval"`
-	ResendInterval        uint32   `json:"resend_interval"`
-	IgnoreTLS             bool     `json:"ignore_tls"`
-	UpsideDown            bool     `json:"upside_down"`
-	MaxRedirects          uint32   `json:"max_redirects"`
-	AcceptedStatusCodes   []string `json:"accepted_status_codes"`
-	Headers               string   `json:"headers"`
-	Body                  string   `json:"body"`
-	AuthMethod            string   `json:"auth_method"`
-	Keyword               string   `json:"keyword"`
-	InvertKeyword         bool     `json:"invert_keyword"`
-	ExpiryNotification    bool     `json:"expiry_notification"`
-	PacketSize            uint32   `json:"packet_size"`
-	HTTPBodyEncoding      string   `json:"http_body_encoding"`
-	DNSResolveType        string   `json:"dns_resolve_type"`
-	DNSResolveServer      string   `json:"dns_resolve_server"`
-	PingNumeric           bool     `json:"ping_numeric"`
-	PingCount             uint32   `json:"ping_count"`
-	PingPerRequestTimeout uint32   `json:"ping_per_request_timeout"`
-	Tags                  []ExportTag          `json:"tags"`
-	NotificationNames     []string             `json:"notification_names"`
+	Name                  string      `json:"name"`
+	Description           string      `json:"description"`
+	Type                  string      `json:"type"`
+	Active                bool        `json:"active"`
+	URL                   string      `json:"url"`
+	Hostname              string      `json:"hostname"`
+	Port                  uint16      `json:"port"`
+	Method                string      `json:"method"`
+	Interval              uint32      `json:"interval"`
+	Timeout               float64     `json:"timeout"`
+	MaxRetries            uint32      `json:"max_retries"`
+	RetryInterval         uint32      `json:"retry_interval"`
+	ResendInterval        uint32      `json:"resend_interval"`
+	IgnoreTLS             bool        `json:"ignore_tls"`
+	UpsideDown            bool        `json:"upside_down"`
+	MaxRedirects          uint32      `json:"max_redirects"`
+	AcceptedStatusCodes   []string    `json:"accepted_status_codes"`
+	Headers               string      `json:"headers"`
+	Body                  string      `json:"body"`
+	AuthMethod            string      `json:"auth_method"`
+	Keyword               string      `json:"keyword"`
+	InvertKeyword         bool        `json:"invert_keyword"`
+	ExpiryNotification    bool        `json:"expiry_notification"`
+	PacketSize            uint32      `json:"packet_size"`
+	HTTPBodyEncoding      string      `json:"http_body_encoding"`
+	DNSResolveType        string      `json:"dns_resolve_type"`
+	DNSResolveServer      string      `json:"dns_resolve_server"`
+	PingNumeric           bool        `json:"ping_numeric"`
+	PingCount             uint32      `json:"ping_count"`
+	PingPerRequestTimeout uint32      `json:"ping_per_request_timeout"`
+	Tags                  []ExportTag `json:"tags"`
+	NotificationNames     []string    `json:"notification_names"`
 }
 
 type ExportTag struct {
@@ -74,19 +76,19 @@ type ExportNotification struct {
 }
 
 type ImportPreviewResponse struct {
-	NewCount       int                       `json:"new_count"`
-	ConflictCount  int                       `json:"conflict_count"`
-	Conflicts      []ImportConflict          `json:"conflicts"`
-	NewMonitors    []ExportMonitor           `json:"new_monitors"`
-	NewTags        []ExportTag               `json:"new_tags"`
-	Summary        string                    `json:"summary"`
+	NewCount      int              `json:"new_count"`
+	ConflictCount int              `json:"conflict_count"`
+	Conflicts     []ImportConflict `json:"conflicts"`
+	NewMonitors   []ExportMonitor  `json:"new_monitors"`
+	NewTags       []ExportTag      `json:"new_tags"`
+	Summary       string           `json:"summary"`
 }
 
 type ImportConflict struct {
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	ExistingID    uint   `json:"existing_id"`
-	ExistingName  string `json:"existing_name"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	ExistingID   uint   `json:"existing_id"`
+	ExistingName string `json:"existing_name"`
 }
 
 type ImportRequest struct {
@@ -154,38 +156,38 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 		}
 
 		exportMonitors[i] = ExportMonitor{
-			Name:                m.Name,
-			Description:         m.Description,
-			Type:                m.Type,
-			Active:              true,
-			URL:                 m.URL,
-			Hostname:            m.Hostname,
-			Port:                m.Port,
-			Method:              m.Method,
-			Interval:            m.Interval,
-			Timeout:             m.Timeout,
-			MaxRetries:          m.MaxRetries,
-			RetryInterval:       m.RetryInterval,
-			ResendInterval:      m.ResendInterval,
-			IgnoreTLS:           m.IgnoreTLS,
-			UpsideDown:          m.UpsideDown,
-			MaxRedirects:        m.MaxRedirects,
-			AcceptedStatusCodes: acceptedCodes,
-			Headers:             m.Headers,
-			Body:                m.Body,
-			AuthMethod:          m.AuthMethod,
-			Keyword:             m.Keyword,
-			InvertKeyword:       m.InvertKeyword,
-			ExpiryNotification:  m.ExpiryNotification,
-			PacketSize:          m.PacketSize,
-			HTTPBodyEncoding:    m.HTTPBodyEncoding,
-			DNSResolveType:      m.DNSResolveType,
-			DNSResolveServer:    m.DNSResolveServer,
-			PingNumeric:         m.PingNumeric,
-			PingCount:           m.PingCount,
+			Name:                  m.Name,
+			Description:           m.Description,
+			Type:                  m.Type,
+			Active:                m.Active,
+			URL:                   m.URL,
+			Hostname:              m.Hostname,
+			Port:                  m.Port,
+			Method:                m.Method,
+			Interval:              m.Interval,
+			Timeout:               m.Timeout,
+			MaxRetries:            m.MaxRetries,
+			RetryInterval:         m.RetryInterval,
+			ResendInterval:        m.ResendInterval,
+			IgnoreTLS:             m.IgnoreTLS,
+			UpsideDown:            m.UpsideDown,
+			MaxRedirects:          m.MaxRedirects,
+			AcceptedStatusCodes:   acceptedCodes,
+			Headers:               m.Headers,
+			Body:                  m.Body,
+			AuthMethod:            m.AuthMethod,
+			Keyword:               m.Keyword,
+			InvertKeyword:         m.InvertKeyword,
+			ExpiryNotification:    m.ExpiryNotification,
+			PacketSize:            m.PacketSize,
+			HTTPBodyEncoding:      m.HTTPBodyEncoding,
+			DNSResolveType:        m.DNSResolveType,
+			DNSResolveServer:      m.DNSResolveServer,
+			PingNumeric:           m.PingNumeric,
+			PingCount:             m.PingCount,
 			PingPerRequestTimeout: m.PingPerRequestTimeout,
-			Tags:                exportTags,
-			NotificationNames:   notifNames,
+			Tags:                  exportTags,
+			NotificationNames:     notifNames,
 		}
 	}
 
@@ -199,10 +201,10 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 	}
 
 	file := ExportFile{
-		Version:    "1.0",
-		ExportedAt: time.Now().UTC().Format(time.RFC3339),
-		ExportedBy: username.(string),
-		Monitors:   exportMonitors,
+		Version:       "1.0",
+		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
+		ExportedBy:    username.(string),
+		Monitors:      exportMonitors,
 		Notifications: exportNotifs,
 	}
 
@@ -261,6 +263,35 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 
 	result := ImportResult{}
 	tx := h.DB.Begin()
+	importedMonitors := make([]model.Monitor, 0, len(req.Data.Monitors))
+
+	for _, en := range req.Data.Notifications {
+		if en.Name == "" || en.Type == "" {
+			continue
+		}
+		var existing model.Notification
+		err := tx.Where("user_id = ? AND name = ?", userID, en.Name).First(&existing).Error
+		if err == nil {
+			if req.Strategy == "overwrite" {
+				existing.Type = en.Type
+				if !containsMaskedValue(en.Config) {
+					existing.Config = en.Config
+				}
+				tx.Save(&existing)
+			}
+			continue
+		}
+		if containsMaskedValue(en.Config) {
+			continue
+		}
+		tx.Create(&model.Notification{
+			UserID: userID.(uint),
+			Name:   en.Name,
+			Type:   en.Type,
+			Config: en.Config,
+			Active: true,
+		})
+	}
 
 	for _, em := range req.Data.Monitors {
 		var existing model.Monitor
@@ -273,14 +304,20 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 				continue
 			case "overwrite":
 				existing = applyExportMonitor(existing, em)
-				tx.Save(&existing)
+				if err := tx.Save(&existing).Error; err != nil {
+					result.Errors = append(result.Errors, "failed to update "+em.Name+": "+err.Error())
+					tx.Rollback()
+					c.JSON(http.StatusInternalServerError, result)
+					return
+				}
+				refreshTagsAndNotifs(tx, &existing, em)
+				importedMonitors = append(importedMonitors, existing)
 				result.Updated++
 			case "copy":
 				em.Name = em.Name + " (copy)"
 				fallthrough
 			default:
 				result.Created++
-				result.Created++ // compensate fallthrough
 				monitor := newMonitorFromExport(userID.(uint), em)
 				if err := tx.Create(&monitor).Error; err != nil {
 					result.Errors = append(result.Errors, "failed to create "+em.Name+": "+err.Error())
@@ -289,6 +326,7 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 					return
 				}
 				attachTagsAndNotifs(tx, &monitor, em)
+				importedMonitors = append(importedMonitors, monitor)
 			}
 		} else {
 			result.Created++
@@ -298,10 +336,23 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 				continue
 			}
 			attachTagsAndNotifs(tx, &monitor, em)
+			importedMonitors = append(importedMonitors, monitor)
 		}
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if h.Scheduler != nil {
+		for i := range importedMonitors {
+			if importedMonitors[i].Active {
+				h.Scheduler.RestartMonitor(&importedMonitors[i])
+			} else {
+				h.Scheduler.StopMonitor(importedMonitors[i].ID)
+			}
+		}
+	}
 	result.Imported = result.Created + result.Updated
 	c.JSON(http.StatusOK, result)
 }
@@ -309,36 +360,36 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 func newMonitorFromExport(userID uint, em ExportMonitor) model.Monitor {
 	codesJSON, _ := json.Marshal(em.AcceptedStatusCodes)
 	return model.Monitor{
-		UserID:              userID,
-		Name:                em.Name,
-		Description:         em.Description,
-		Type:                em.Type,
-		Active:              em.Active,
-		URL:                 em.URL,
-		Hostname:            em.Hostname,
-		Port:                em.Port,
-		Method:              em.Method,
-		Interval:            em.Interval,
-		Timeout:             em.Timeout,
-		MaxRetries:          em.MaxRetries,
-		RetryInterval:       em.RetryInterval,
-		ResendInterval:      em.ResendInterval,
-		IgnoreTLS:           em.IgnoreTLS,
-		UpsideDown:          em.UpsideDown,
-		MaxRedirects:        em.MaxRedirects,
-		AcceptedStatusCodes: string(codesJSON),
-		Headers:             em.Headers,
-		Body:                em.Body,
-		AuthMethod:          em.AuthMethod,
-		Keyword:             em.Keyword,
-		InvertKeyword:       em.InvertKeyword,
-		ExpiryNotification:  em.ExpiryNotification,
-		PacketSize:          em.PacketSize,
-		HTTPBodyEncoding:    em.HTTPBodyEncoding,
-		DNSResolveType:      em.DNSResolveType,
-		DNSResolveServer:    em.DNSResolveServer,
-		PingNumeric:         em.PingNumeric,
-		PingCount:           em.PingCount,
+		UserID:                userID,
+		Name:                  em.Name,
+		Description:           em.Description,
+		Type:                  em.Type,
+		Active:                em.Active,
+		URL:                   em.URL,
+		Hostname:              em.Hostname,
+		Port:                  em.Port,
+		Method:                em.Method,
+		Interval:              em.Interval,
+		Timeout:               em.Timeout,
+		MaxRetries:            em.MaxRetries,
+		RetryInterval:         em.RetryInterval,
+		ResendInterval:        em.ResendInterval,
+		IgnoreTLS:             em.IgnoreTLS,
+		UpsideDown:            em.UpsideDown,
+		MaxRedirects:          em.MaxRedirects,
+		AcceptedStatusCodes:   string(codesJSON),
+		Headers:               em.Headers,
+		Body:                  em.Body,
+		AuthMethod:            em.AuthMethod,
+		Keyword:               em.Keyword,
+		InvertKeyword:         em.InvertKeyword,
+		ExpiryNotification:    em.ExpiryNotification,
+		PacketSize:            em.PacketSize,
+		HTTPBodyEncoding:      em.HTTPBodyEncoding,
+		DNSResolveType:        em.DNSResolveType,
+		DNSResolveServer:      em.DNSResolveServer,
+		PingNumeric:           em.PingNumeric,
+		PingCount:             em.PingCount,
 		PingPerRequestTimeout: em.PingPerRequestTimeout,
 	}
 }
@@ -400,6 +451,12 @@ func attachTagsAndNotifs(tx *gorm.DB, monitor *model.Monitor, em ExportMonitor) 
 	}
 }
 
+func refreshTagsAndNotifs(tx *gorm.DB, monitor *model.Monitor, em ExportMonitor) {
+	tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorTag{})
+	tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorNotification{})
+	attachTagsAndNotifs(tx, monitor, em)
+}
+
 func addTagIfNew(preview *ImportPreviewResponse, et ExportTag) {
 	for _, existing := range preview.NewTags {
 		if existing.Name == et.Name {
@@ -410,7 +467,53 @@ func addTagIfNew(preview *ImportPreviewResponse, et ExportTag) {
 }
 
 func maskSensitive(config string) string {
-	return config // stub - will mask password/secrets in production
+	var value any
+	if err := json.Unmarshal([]byte(config), &value); err != nil {
+		return config
+	}
+	masked := maskJSONValue(value)
+	bytes, err := json.Marshal(masked)
+	if err != nil {
+		return config
+	}
+	return string(bytes)
+}
+
+func maskJSONValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, val := range v {
+			if isSensitiveKey(key) {
+				out[key] = "***"
+			} else {
+				out[key] = maskJSONValue(val)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, val := range v {
+			out[i] = maskJSONValue(val)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func isSensitiveKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, part := range []string{"password", "secret", "token", "webhook", "key"} {
+		if strings.Contains(k, part) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsMaskedValue(config string) bool {
+	return strings.Contains(config, `"***"`) || strings.Contains(config, ":***")
 }
 
 func itoa(n int) string {

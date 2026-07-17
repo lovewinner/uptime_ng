@@ -3,14 +3,7 @@ import { onMounted, ref, reactive, computed } from 'vue'
 import api from '@/api/http'
 import { ElMessageBox } from 'element-plus'
 import { ElMessage } from 'element-plus'
-
-interface Notification {
-  id: number
-  name: string
-  type: string
-  config: string
-  active: boolean
-}
+import type { Notification } from '@/api/types'
 
 const notifications = ref<Notification[]>([])
 const loading = ref(false)

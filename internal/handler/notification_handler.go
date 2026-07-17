@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -8,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"uptime_ng/internal/model"
+	"uptime_ng/internal/notifier"
 )
 
 type NotificationHandler struct {
@@ -91,6 +93,10 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Type != "feishu" && req.Type != "email" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be feishu or email"})
+		return
+	}
 
 	notif.Name = req.Name
 	notif.Type = req.Type
@@ -128,7 +134,42 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 		return
 	}
 
-	msg := fmt.Sprintf("🔔 来自 uptime_ng 的测试消息。通知: %s (%s)", notif.Name, notif.Type)
+	var configMap map[string]string
+	if err := json.Unmarshal([]byte(notif.Config), &configMap); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification config json"})
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": msg, "note": "email/feishu sending will be implemented in P4"})
+	msg := fmt.Sprintf("来自 uptime_ng 的测试消息。通知: %s (%s)", notif.Name, notif.Type)
+	switch notif.Type {
+	case "feishu":
+		webhookURL := configMap["webhook_url"]
+		if webhookURL == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing webhook_url"})
+			return
+		}
+		if err := notifier.NewFeishuNotifier(webhookURL, h.DB).SendText(msg); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+	case "email":
+		to := configMap["email"]
+		if to == "" {
+			to = configMap["to"]
+		}
+		if to == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing email recipient"})
+			return
+		}
+		n := notifier.NewEmailNotifierFromConfig(to)
+		if err := n.Send("[uptime_ng] 通知测试", "<p>"+msg+"</p>"); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported notification type"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "测试消息已发送"})
 }

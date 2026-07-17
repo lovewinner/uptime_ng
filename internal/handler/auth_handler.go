@@ -179,10 +179,18 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 
 	updates := map[string]interface{}{}
 	if req.Role != nil {
+		if *req.Role != model.RoleAdmin && *req.Role != model.RoleUser {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "role must be admin or user"})
+			return
+		}
 		updates["role"] = *req.Role
 	}
 	if req.Active != nil {
 		updates["active"] = *req.Active
+	}
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no updates provided"})
+		return
 	}
 
 	if err := h.DB.Model(&model.User{}).Where("id = ?", userID).Updates(updates).Error; err != nil {

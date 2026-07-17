@@ -66,9 +66,10 @@ func main() {
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 
-	router.Setup(r, db)
-
-	sch := engine.NewScheduler(db)
+	hub := handler.NewWSHub()
+	go hub.Run()
+	sch := engine.NewScheduler(db, hub)
+	router.Setup(r, db, hub, sch)
 	if err := sch.StartAll(); err != nil {
 		log.Printf("Warning: Failed to start monitors: %v", err)
 	}
@@ -99,7 +100,7 @@ func main() {
 
 	addr := fmt.Sprintf("%s:%d", config.AppConfig.Server.Host, config.AppConfig.Server.Port)
 	log.Printf("uptime_ng server starting on %s", addr)
-	log.Printf("WebSocket hub running: %v", handler.Hub != nil)
+	log.Printf("WebSocket hub running: %v", hub != nil)
 	log.Printf("Monitor scheduler running: %d monitors", sch.RunningCount())
 
 	if err := r.Run(addr); err != nil {

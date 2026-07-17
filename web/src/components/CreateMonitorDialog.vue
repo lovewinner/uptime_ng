@@ -2,10 +2,12 @@
 import { ref, watch, computed } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
 import { ElMessage } from 'element-plus'
+import type { Monitor } from '@/stores/monitor'
+import type { MonitorPayload } from '@/api/types'
 
 const props = defineProps<{
   modelValue: boolean
-  monitor?: any | null
+  monitor?: Monitor | null
 }>()
 
 const emit = defineEmits<{
@@ -24,7 +26,7 @@ const formRef = ref()
 const saving = ref(false)
 const statusTags = ref<string[]>(['200-299'])
 
-const form = ref({
+const form = ref<MonitorPayload>({
   name: '',
   description: '',
   type: 'http',
@@ -134,12 +136,12 @@ async function handleSubmit() {
 
   saving.value = true
   try {
-    const payload = {
+    const payload: MonitorPayload = {
       ...form.value,
       port: form.value.port || 0,
     }
     if (isEdit.value) {
-      await store.updateMonitor(props.monitor.id, payload)
+      await store.updateMonitor(props.monitor!.id, payload)
     } else {
       await store.createMonitor(payload)
     }

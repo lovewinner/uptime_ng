@@ -1,6 +1,8 @@
 package router
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -8,10 +10,7 @@ import (
 	"uptime_ng/internal/middleware"
 )
 
-func Setup(r *gin.Engine, db *gorm.DB) *handler.WSHub {
-	hub := handler.NewWSHub()
-	go hub.Run()
-
+func Setup(r *gin.Engine, db *gorm.DB, hub *handler.WSHub, scheduler handler.MonitorScheduler) {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "version": "0.1.0"})
 	})
@@ -28,7 +27,7 @@ func Setup(r *gin.Engine, db *gorm.DB) *handler.WSHub {
 	api.GET("/auth/users", middleware.AdminRequired(), auth.ListUsers)
 	api.PATCH("/auth/users/:id", middleware.AdminRequired(), auth.UpdateUser)
 
-	monitor := handler.NewMonitorHandler(db)
+	monitor := handler.NewMonitorHandler(db, scheduler)
 	api.GET("/monitors", monitor.List)
 	api.POST("/monitors", monitor.Create)
 	api.GET("/monitors/:id", monitor.Get)
@@ -56,13 +55,12 @@ func Setup(r *gin.Engine, db *gorm.DB) *handler.WSHub {
 	api.GET("/monitors/:id/uptime/data", sla.GetUptimeData)
 	api.GET("/monitors/uptime/overall", sla.GetOverall)
 
-	ie := handler.NewImportExportHandler(db)
+	ie := handler.NewImportExportHandler(db, scheduler)
 	api.GET("/monitors/export", ie.ExportMonitors)
 	api.POST("/monitors/import/preview", ie.ImportPreview)
 	api.POST("/monitors/import", ie.ImportExecute)
 
-	// WebSocket
-	api.GET("/ws", func(c *gin.Context) {
+	r.GET("/api/ws", middleware.WSAuthRequired(), func(c *gin.Context) {
 		hub.HandleWebSocket(c)
 	})
 
@@ -73,12 +71,10 @@ func Setup(r *gin.Engine, db *gorm.DB) *handler.WSHub {
 
 	r.NoRoute(func(c *gin.Context) {
 		// SPA fallback: serve index.html for all non-API routes
-		if c.Request.Method == "GET" && len(c.Request.URL.Path) > 0 && c.Request.URL.Path[0:5] != "/api/" {
+		if c.Request.Method == "GET" && !strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.File("./dist/index.html")
 			return
 		}
 		c.JSON(404, gin.H{"error": "not found"})
 	})
-
-	return hub
 }

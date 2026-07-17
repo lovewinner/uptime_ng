@@ -8,12 +8,13 @@ import CreateMonitorDialog from '@/components/CreateMonitorDialog.vue'
 import ExportDialog from '@/components/ExportDialog.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import api from '@/api/http'
+import type { Monitor } from '@/stores/monitor'
 
 const store = useMonitorStore()
 const router = useRouter()
 
 const dialogVisible = ref(false)
-const editingMonitor = ref<any>(null)
+const editingMonitor = ref<Monitor | null>(null)
 const exportVisible = ref(false)
 const importVisible = ref(false)
 
@@ -22,7 +23,7 @@ function handleCreate() {
   dialogVisible.value = true
 }
 
-function handleEdit(monitor: any) {
+function handleEdit(monitor: Monitor) {
   editingMonitor.value = { ...monitor }
   dialogVisible.value = true
 }
@@ -32,7 +33,7 @@ function handleSaved() {
   ElMessage.success('保存成功')
 }
 
-async function handleDelete(monitor: any) {
+async function handleDelete(monitor: Monitor) {
   try {
     await ElMessageBox.confirm(`确定要删除监控项 "${monitor.name}" 吗？`, '确认删除', {
       type: 'warning',
@@ -45,7 +46,7 @@ async function handleDelete(monitor: any) {
   }
 }
 
-async function handlePauseResume(monitor: any) {
+async function handlePauseResume(monitor: Monitor) {
   if (monitor.active) {
     await store.pauseMonitor(monitor.id)
     ElMessage.success('已暂停')
@@ -59,7 +60,7 @@ function goDetail(id: number) {
   router.push(`/monitors/${id}`)
 }
 
-function getUrl(monitor: any): string {
+function getUrl(monitor: Monitor): string {
   if (monitor.url) return monitor.url
   if (monitor.hostname && monitor.port) return `${monitor.hostname}:${monitor.port}`
   if (monitor.hostname) return monitor.hostname
@@ -83,7 +84,7 @@ async function handleExport(ids?: number[]) {
       url += '?ids=' + JSON.stringify(ids)
     }
     const res = await api.get(url, { responseType: 'blob' })
-    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
+    const blob = new Blob([res.data], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = 'uptime_ng_export.json'

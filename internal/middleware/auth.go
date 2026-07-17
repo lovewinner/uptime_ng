@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,13 +20,8 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-		claims := &model.JWTClaims{}
-		token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
-			return []byte(config.AppConfig.JWT.Secret), nil
-		})
-
-		if err != nil || !token.Valid {
+		claims, err := parseJWT(strings.TrimPrefix(authHeader, "Bearer "))
+		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
@@ -35,6 +31,47 @@ func AuthRequired() gin.HandlerFunc {
 		c.Set("role", claims.Role)
 		c.Next()
 	}
+}
+
+func WSAuthRequired() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			authHeader := c.GetHeader("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				tokenStr = strings.TrimPrefix(authHeader, "Bearer ")
+			}
+		}
+		if tokenStr == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
+			return
+		}
+
+		claims, err := parseJWT(tokenStr)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+
+		c.Set("user_id", claims.UserID)
+		c.Set("username", claims.Username)
+		c.Set("role", claims.Role)
+		c.Next()
+	}
+}
+
+func parseJWT(tokenStr string) (*model.JWTClaims, error) {
+	claims := &model.JWTClaims{}
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method: %s", token.Header["alg"])
+		}
+		return []byte(config.AppConfig.JWT.Secret), nil
+	})
+	if err != nil || !token.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+	return claims, nil
 }
 
 func AdminRequired() gin.HandlerFunc {

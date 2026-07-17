@@ -19,11 +19,11 @@ type UptimeCalculator struct {
 }
 
 type AggregateBucket struct {
-	Up      uint32
-	Down    uint32
-	AvgPing float64
-	MinPing float64
-	MaxPing float64
+	Up          uint32
+	Down        uint32
+	AvgPing     float64
+	MinPing     float64
+	MaxPing     float64
 	Maintenance uint32
 }
 
@@ -314,6 +314,15 @@ func (u *UptimeCalculator) CleanupOldData() {
 	for k := range u.HourlyData {
 		if k < hourlyCutoff {
 			delete(u.HourlyData, k)
+		}
+	}
+
+	dailyCutoff := now.Add(-365 * 24 * time.Hour).Unix()
+	u.DB.Where("monitor_id = ? AND timestamp < ?", u.MonitorID, dailyCutoff).
+		Delete(&model.StatDaily{})
+	for k := range u.DailyData {
+		if k < dailyCutoff {
+			delete(u.DailyData, k)
 		}
 	}
 }

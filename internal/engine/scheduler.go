@@ -7,15 +7,19 @@ import (
 
 	"gorm.io/gorm"
 
-	"uptime_ng/internal/handler"
 	"uptime_ng/internal/model"
 )
 
+type HeartbeatPublisher interface {
+	SendToUser(userID uint, msgType string, payload interface{})
+}
+
 type Scheduler struct {
-	DB       *gorm.DB
-	monitors map[uint]*MonitorRunner
-	mu       sync.RWMutex
-	running  bool
+	DB        *gorm.DB
+	publisher HeartbeatPublisher
+	monitors  map[uint]*MonitorRunner
+	mu        sync.RWMutex
+	running   bool
 }
 
 type MonitorRunner struct {
@@ -24,13 +28,15 @@ type MonitorRunner struct {
 	StopChan   chan struct{}
 	Calculator *UptimeCalculator
 	DB         *gorm.DB
+	Publisher  HeartbeatPublisher
 }
 
-func NewScheduler(db *gorm.DB) *Scheduler {
+func NewScheduler(db *gorm.DB, publisher HeartbeatPublisher) *Scheduler {
 	return &Scheduler{
-		DB:       db,
-		monitors: make(map[uint]*MonitorRunner),
-		running:  true,
+		DB:        db,
+		publisher: publisher,
+		monitors:  make(map[uint]*MonitorRunner),
+		running:   true,
 	}
 }
 
@@ -73,6 +79,7 @@ func (s *Scheduler) StartMonitor(monitor *model.Monitor) {
 		StopChan:   make(chan struct{}),
 		Calculator: calc,
 		DB:         s.DB,
+		Publisher:  s.publisher,
 	}
 
 	s.monitors[monitor.ID] = runner
@@ -175,18 +182,18 @@ func (r *MonitorRunner) beat() {
 
 	isFirstBeat := previousBeat.ID == 0
 	previousStatus := previousBeat.Status
+	if isFirstBeat {
+		previousStatus = model.StatusUP
+	}
 
 	beat.DownCount = previousBeat.DownCount
+	beat.Retries = previousBeat.Retries
 
 	if result.Status == model.StatusDown {
 		if monitor.MaxRetries > 0 && beat.Retries < monitor.MaxRetries {
 			beat.Retries++
 			beat.Status = model.StatusPending
 		}
-		beat.DownCount++
-	}
-
-	if monitor.UpsideDown && result.Status == model.StatusUP {
 		beat.DownCount++
 	} else {
 		beat.Retries = 0
@@ -197,10 +204,10 @@ func (r *MonitorRunner) beat() {
 
 	if isImportant {
 		beat.DownCount = 0
-		r.sendNotification(isFirstBeat, beat)
+		r.sendNotification(isFirstBeat, previousStatus, beat)
 	} else if beat.Status == model.StatusDown && monitor.ResendInterval > 0 {
 		if beat.DownCount >= monitor.ResendInterval {
-			r.sendNotification(isFirstBeat, beat)
+			r.sendNotification(isFirstBeat, previousStatus, beat)
 			beat.DownCount = 0
 		}
 	}
@@ -209,21 +216,13 @@ func (r *MonitorRunner) beat() {
 
 	r.DB.Create(&beat)
 
-	if handler.Hub != nil {
-		handler.Hub.SendToUser(monitor.UserID, "heartbeat", beat)
+	if r.Publisher != nil {
+		r.Publisher.SendToUser(monitor.UserID, "heartbeat", beat)
 	}
 }
 
-func (r *MonitorRunner) sendNotification(isFirstBeat bool, beat model.Heartbeat) {
+func (r *MonitorRunner) sendNotification(isFirstBeat bool, prevStatus uint16, beat model.Heartbeat) {
 	dispatch := NewNotifyDispatch(r.DB)
-	var prevStatus uint16 = model.StatusUP
-	if !isFirstBeat {
-		var pb model.Heartbeat
-		r.DB.Where("monitor_id = ?", r.Monitor.ID).Order("time DESC").Offset(1).First(&pb)
-		if pb.ID > 0 {
-			prevStatus = pb.Status
-		}
-	}
 	dispatch.Send(r.Monitor, beat, isFirstBeat, prevStatus)
 	dispatch.markIncident(r.DB, r.Monitor.ID, r.Monitor.Name, prevStatus, beat.Status, beat.Msg)
 }
