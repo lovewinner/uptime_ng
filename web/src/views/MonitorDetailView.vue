@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, onUnmounted } from 'vue'
+import { onMounted, ref, computed, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '@/api/http'
 import { useMonitorStore } from '@/stores/monitor'
@@ -36,11 +36,16 @@ const incidentList = ref<any[]>([])
 const pingChartData = ref<any[]>([])
 const uptimeChartData = ref<any[]>([])
 const loading = ref(false)
+const uptimeSummary = ref({ uptime_24h: 0, uptime_30d: 0, uptime_1y: 0 })
 
-const beatsContainer = ref<HTMLElement | null>(null)
+function uptimePercent(v: number): string {
+  return (v * 100).toFixed(2) + '%'
+}
+
+const beatsContainer = ref<any | null>(null)
 const containerWidth = ref(0)
 const allBeats = ref<any[]>([])
-const beatCount = computed(() => Math.max(10, Math.floor((containerWidth.value || 0) / 14)))
+const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 14)))
 const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
 
 async function loadBeats() {
@@ -48,7 +53,6 @@ async function loadBeats() {
   const res = await api.get(`/monitors/${id}/beats`, { params: { period: 86400 } })
   allBeats.value = res.data || []
 }
-
 const pingChartOption = computed(() => ({
   color: ['#E6A23C', '#409EFF', '#67C23A'],
   tooltip: { trigger: 'axis' },
@@ -73,7 +77,7 @@ const pingChartOption = computed(() => ({
         .filter((d: any) => d.up > 0)
         .map((d: any) => [new Date(d.timestamp * 1000), d.max_ping !== undefined ? Number(d.max_ping) : 0]),
       smooth: true,
-      symbol: 'none',
+      symbol: 'circle',
     },
     {
       name: '平均响应',
@@ -83,6 +87,7 @@ const pingChartOption = computed(() => ({
         .map((d: any) => [new Date(d.timestamp * 1000), d.avg_ping !== undefined ? Number(d.avg_ping) : 0]),
       smooth: true,
       areaStyle: { opacity: 0.1 },
+      symbol: 'circle',
     },
     {
       name: '最小响应',
@@ -91,7 +96,7 @@ const pingChartOption = computed(() => ({
         .filter((d: any) => d.up > 0)
         .map((d: any) => [new Date(d.timestamp * 1000), d.min_ping !== undefined ? Number(d.min_ping) : 0]),
       smooth: true,
-      symbol: 'none',
+      symbol: 'circle',
     },
   ],
 }))
@@ -146,14 +151,16 @@ onMounted(async () => {
     const res = await api.get(`/monitors/${id}`)
     monitor.value = res.data.monitor
 
-    const [pingRes, uptimeRes, incidentsRes] = await Promise.all([
+    const [pingRes, uptimeRes, incidentsRes, summaryRes] = await Promise.all([
       api.get(`/monitors/${id}/uptime/data`, { params: { granularity: 'hourly', num: 24 } }),
       api.get(`/monitors/${id}/uptime/data`, { params: { granularity: 'daily', num: 30 } }),
       api.get(`/monitors/${id}/incidents`),
+      api.get(`/monitors/${id}/uptime/summary`),
     ])
 
     pingChartData.value = pingRes.data || []
     uptimeChartData.value = uptimeRes.data || []
+    uptimeSummary.value = summaryRes.data || {}
     await loadBeats()
     const interval = monitor.value?.interval
     if (interval && interval > 0) {
@@ -166,12 +173,13 @@ onMounted(async () => {
     loading.value = false
   }
 
-  if (beatsContainer.value) {
-    containerWidth.value = beatsContainer.value.clientWidth
+  await nextTick()
+  if (beatsContainer.value?.$el) {
+    containerWidth.value = beatsContainer.value.$el.clientWidth
     beatsObserver = new ResizeObserver(entries => {
       containerWidth.value = entries[0]?.contentRect?.width ?? containerWidth.value
     })
-    beatsObserver.observe(beatsContainer.value)
+    beatsObserver.observe(beatsContainer.value.$el)
   }
 })
 </script>
@@ -207,6 +215,15 @@ onMounted(async () => {
               store.statusList.find(s => s.id === monitor.id)?.status ?? 2
             ) }}
           </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item v-if="monitor.type === 'ping'" label="在线时间 (24 小时)">
+          {{ uptimePercent(uptimeSummary.uptime_24h) }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="monitor.type === 'ping'" label="在线时间 (30 天)">
+          {{ uptimePercent(uptimeSummary.uptime_30d) }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="monitor.type === 'ping'" label="在线时间 (1 年)">
+          {{ uptimePercent(uptimeSummary.uptime_1y) }}
         </el-descriptions-item>
       </el-descriptions>
 

@@ -219,6 +219,57 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 	}
 }
 
+func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	monitorID := c.Param("id")
+
+	var monitor model.Monitor
+	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "monitor not found"})
+		return
+	}
+
+	type uptimeSummary struct {
+		Uptime24H float64 `json:"uptime_24h"`
+		Uptime30D float64 `json:"uptime_30d"`
+		Uptime1Y  float64 `json:"uptime_1y"`
+	}
+
+	var result uptimeSummary
+
+	// 24h: compute from heartbeats
+	cutoff24h := time.Now().Add(-24 * time.Hour)
+	var up24, down24 int64
+	h.DB.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff24h, model.StatusUP).Count(&up24)
+	h.DB.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff24h, model.StatusDown).Count(&down24)
+	if up24+down24 > 0 {
+		result.Uptime24H = float64(up24) / float64(up24+down24)
+	} else {
+		result.Uptime24H = 1.0
+	}
+
+	// 30d / 1y: compute from stat_dailies
+	computeDaily := func(days int) float64 {
+		cutoff := timeNowUnix() - int64(days)*86400
+		var stats []model.StatDaily
+		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Find(&stats)
+		var up, down uint32
+		for _, s := range stats {
+			up += s.Up
+			down += s.Down
+		}
+		total := up + down
+		if total > 0 {
+			return float64(up) / float64(total)
+		}
+		return 1.0
+	}
+	result.Uptime30D = computeDaily(30)
+	result.Uptime1Y = computeDaily(365)
+
+	c.JSON(http.StatusOK, result)
+}
+
 func periodToDays(period string) int {
 	switch period {
 	case "day":

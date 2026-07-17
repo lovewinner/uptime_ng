@@ -53,6 +53,7 @@ func Setup(r *gin.Engine, db *gorm.DB, hub *handler.WSHub, scheduler handler.Mon
 	sla := handler.NewSLAHandler(db)
 	api.GET("/monitors/:id/uptime", sla.GetUptime)
 	api.GET("/monitors/:id/uptime/data", sla.GetUptimeData)
+	api.GET("/monitors/:id/uptime/summary", sla.GetUptimeSummary)
 	api.GET("/monitors/uptime/overall", sla.GetOverall)
 
 	ie := handler.NewImportExportHandler(db, scheduler)
