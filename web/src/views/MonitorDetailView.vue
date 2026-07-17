@@ -47,10 +47,9 @@ const pingChartOption = computed(() => ({
     {
       name: '平均响应 (ms)',
       type: 'line',
-      data: pingChartData.value.map((d: any) => [
-        new Date(d.timestamp * 1000),
-        d.avg_ping !== undefined ? Number(d.avg_ping) : 0,
-      ].filter((v: any) => !isNaN(v))),
+      data: pingChartData.value
+        .filter((d: any) => d.up > 0)
+        .map((d: any) => [new Date(d.timestamp * 1000), d.avg_ping !== undefined ? Number(d.avg_ping) : 0]),
       smooth: true,
       areaStyle: { opacity: 0.1 },
     },
