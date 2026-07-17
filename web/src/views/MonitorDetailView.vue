@@ -240,7 +240,7 @@ onMounted(async () => {
           <div
             v-for="(beat, i) in heartbeatList"
             :key="beat.id ?? i"
-            :class="{ 'beat-pop': i === heartbeatList.length - 1 }"
+            :class="['beat-cell', { 'beat-pop': i === heartbeatList.length - 1 }]"
             :title="`${new Date(beat.time).toLocaleString('zh-CN')} · ${statusText(beat.status)} · ${formatPing(beat.ping_ms)}`"
             :style="{
               width: '14px', height: '14px', borderRadius: '2px',
@@ -311,6 +311,15 @@ onMounted(async () => {
 .beat-leave-to {
   transform: translateX(-16px) !important;
   opacity: 0;
+}
+
+.beat-cell {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.beat-cell:hover {
+  transform: scale(1.6);
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 
 @keyframes beatPop {
