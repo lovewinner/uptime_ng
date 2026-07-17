@@ -31,6 +31,14 @@ const incidentList = ref<any[]>([])
 const pingChartData = ref<any[]>([])
 const uptimeChartData = ref<any[]>([])
 const loading = ref(false)
+const beatCount = ref(50)
+
+async function loadBeats() {
+  const id = monitorId.value
+  const res = await api.get(`/monitors/${id}/beats`, { params: { period: 86400 } })
+  const beats = res.data || []
+  heartbeatList.value = beats.slice(-beatCount.value)
+}
 
 const pingChartOption = computed(() => ({
   color: ['#E6A23C', '#409EFF', '#67C23A'],
@@ -115,21 +123,6 @@ function statusText(status: number): string {
   }
 }
 
-function statusTagType(status: number): string {
-  switch (status) {
-    case 1: return 'success'
-    case 0: return 'danger'
-    case 2: return 'warning'
-    default: return 'info'
-  }
-}
-
-function formatDate(ts: number): string {
-  return new Date(ts * 1000).toLocaleString('zh-CN', {
-    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  })
-}
-
 function formatPing(ping: number | null): string {
   if (ping == null) return '-'
   return ping.toFixed(1) + ' ms'
@@ -144,16 +137,15 @@ onMounted(async () => {
     const res = await api.get(`/monitors/${id}`)
     monitor.value = res.data.monitor
 
-    const [pingRes, uptimeRes, beatsRes, incidentsRes] = await Promise.all([
+    const [pingRes, uptimeRes, incidentsRes] = await Promise.all([
       api.get(`/monitors/${id}/uptime/data`, { params: { granularity: 'hourly', num: 24 } }),
       api.get(`/monitors/${id}/uptime/data`, { params: { granularity: 'daily', num: 30 } }),
-      api.get(`/monitors/${id}/beats`, { params: { period: 86400 } }),
       api.get(`/monitors/${id}/incidents`),
     ])
 
     pingChartData.value = pingRes.data || []
     uptimeChartData.value = uptimeRes.data || []
-    heartbeatList.value = (beatsRes.data || []).slice(-50).reverse()
+    await loadBeats()
     incidentList.value = incidentsRes.data || []
   } catch {
     // 错误处理
@@ -220,38 +212,26 @@ onMounted(async () => {
 
       <el-card shadow="never" style="margin-bottom: 24px">
         <template #header>
-          <span>最近心跳记录（最多50条）</span>
+          <div style="display: flex; align-items: center; gap: 12px">
+            <span>最近心跳记录</span>
+            <el-input-number v-model="beatCount" :min="10" :max="500" size="small" style="width: 100px"
+              @change="loadBeats" />
+            <span style="font-size: 12px; color: #909399">格</span>
+          </div>
         </template>
-        <el-table :data="heartbeatList" size="small" stripe max-height="400">
-          <el-table-column label="时间" width="160">
-            <template #default="{ row }">
-              {{ new Date(row.time).toLocaleString('zh-CN') }}
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status)" size="small" effect="dark">
-                {{ statusText(row.status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="延迟" width="100">
-            <template #default="{ row }">
-              {{ formatPing(row.ping_ms) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="HTTP状态码" width="100">
-            <template #default="{ row }">
-              {{ row.http_status || '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="消息" min-width="200">
-            <template #default="{ row }">
-              <span style="font-size: 12px">{{ row.msg || '-' }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-if="heartbeatList.length === 0" description="暂无心跳记录" :image-size="60" />
+        <div v-if="heartbeatList.length > 0" style="display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 2px; padding: 8px 0">
+          <div
+            v-for="(beat, i) in heartbeatList"
+            :key="i"
+            :title="`${new Date(beat.time).toLocaleString('zh-CN')} · ${statusText(beat.status)} · ${formatPing(beat.ping_ms)}`"
+            :style="{
+              width: '14px', height: '14px', borderRadius: '2px',
+              flexShrink: 0, cursor: 'pointer',
+              backgroundColor: beat.status === 1 ? '#67C23A' : '#F56C6C'
+            }"
+          />
+        </div>
+        <el-empty v-else description="暂无心跳记录" :image-size="60" />
       </el-card>
 
       <el-card shadow="never">
