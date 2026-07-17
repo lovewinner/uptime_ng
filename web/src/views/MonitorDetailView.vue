@@ -57,7 +57,7 @@ const pingChartOption = computed(() => ({
 }))
 
 const uptimeChartOption = computed(() => ({
-  tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].name}<br/>可用率: ${(p[0].value * 100).toFixed(2)}%` },
+  tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].name}<br/>可用率: ${(p[0].value[1] * 100).toFixed(2)}%` },
   grid: { left: 50, right: 20, top: 30, bottom: 30 },
   xAxis: {
     type: 'time',
@@ -77,7 +77,7 @@ const uptimeChartOption = computed(() => ({
         d.uptime !== undefined ? Number(d.uptime) : 0,
       ]),
       itemStyle: {
-        color: (params: any) => params.value > 0.99 ? '#67C23A' : params.value > 0.95 ? '#E6A23C' : '#F56C6C',
+        color: (params: any) => params.value[1] > 0.99 ? '#67C23A' : params.value[1] > 0.95 ? '#E6A23C' : '#F56C6C',
       },
     },
   ],
