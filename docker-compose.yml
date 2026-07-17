@@ -1,0 +1,47 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: uptime_ng_db
+    restart: always
+    environment:
+      POSTGRES_USER: uptime
+      POSTGRES_PASSWORD: uptime123
+      POSTGRES_DB: uptime_ng
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uptime -d uptime_ng"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: uptime_ng_app
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      UPTIME_NG_SERVER_HOST: "0.0.0.0"
+      UPTIME_NG_SERVER_PORT: "3000"
+      UPTIME_NG_DATABASE_HOST: "db"
+      UPTIME_NG_DATABASE_PORT: "5432"
+      UPTIME_NG_DATABASE_USER: "uptime"
+      UPTIME_NG_DATABASE_PASSWORD: "uptime123"
+      UPTIME_NG_DATABASE_DBNAME: "uptime_ng"
+      UPTIME_NG_DATABASE_SSLMODE: "disable"
+      UPTIME_NG_JWT_SECRET: "change-me-in-production-use-random-string"
+      UPTIME_NG_JWT_EXPIREHOURS: "72"
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  pgdata:

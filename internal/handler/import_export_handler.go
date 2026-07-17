@@ -1,0 +1,434 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"uptime_ng/internal/model"
+)
+
+type ImportExportHandler struct {
+	DB *gorm.DB
+}
+
+func NewImportExportHandler(db *gorm.DB) *ImportExportHandler {
+	return &ImportExportHandler{DB: db}
+}
+
+type ExportFile struct {
+	Version    string           `json:"version"`
+	ExportedAt string           `json:"exported_at"`
+	ExportedBy string           `json:"exported_by"`
+	Monitors   []ExportMonitor  `json:"monitors"`
+	Notifications []ExportNotification `json:"notifications"`
+}
+
+type ExportMonitor struct {
+	Name                  string   `json:"name"`
+	Description           string   `json:"description"`
+	Type                  string   `json:"type"`
+	Active                bool     `json:"active"`
+	URL                   string   `json:"url"`
+	Hostname              string   `json:"hostname"`
+	Port                  uint16   `json:"port"`
+	Method                string   `json:"method"`
+	Interval              uint32   `json:"interval"`
+	Timeout               float64  `json:"timeout"`
+	MaxRetries            uint32   `json:"max_retries"`
+	RetryInterval         uint32   `json:"retry_interval"`
+	ResendInterval        uint32   `json:"resend_interval"`
+	IgnoreTLS             bool     `json:"ignore_tls"`
+	UpsideDown            bool     `json:"upside_down"`
+	MaxRedirects          uint32   `json:"max_redirects"`
+	AcceptedStatusCodes   []string `json:"accepted_status_codes"`
+	Headers               string   `json:"headers"`
+	Body                  string   `json:"body"`
+	AuthMethod            string   `json:"auth_method"`
+	Keyword               string   `json:"keyword"`
+	InvertKeyword         bool     `json:"invert_keyword"`
+	ExpiryNotification    bool     `json:"expiry_notification"`
+	PacketSize            uint32   `json:"packet_size"`
+	HTTPBodyEncoding      string   `json:"http_body_encoding"`
+	DNSResolveType        string   `json:"dns_resolve_type"`
+	DNSResolveServer      string   `json:"dns_resolve_server"`
+	PingNumeric           bool     `json:"ping_numeric"`
+	PingCount             uint32   `json:"ping_count"`
+	PingPerRequestTimeout uint32   `json:"ping_per_request_timeout"`
+	Tags                  []ExportTag          `json:"tags"`
+	NotificationNames     []string             `json:"notification_names"`
+}
+
+type ExportTag struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+type ExportNotification struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Config string `json:"config"`
+}
+
+type ImportPreviewResponse struct {
+	NewCount       int                       `json:"new_count"`
+	ConflictCount  int                       `json:"conflict_count"`
+	Conflicts      []ImportConflict          `json:"conflicts"`
+	NewMonitors    []ExportMonitor           `json:"new_monitors"`
+	NewTags        []ExportTag               `json:"new_tags"`
+	Summary        string                    `json:"summary"`
+}
+
+type ImportConflict struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	ExistingID    uint   `json:"existing_id"`
+	ExistingName  string `json:"existing_name"`
+}
+
+type ImportRequest struct {
+	Data     ExportFile `json:"data" binding:"required"`
+	Strategy string     `json:"strategy"` // skip, overwrite, copy
+}
+
+type ImportResult struct {
+	Imported int      `json:"imported"`
+	Created  int      `json:"created"`
+	Updated  int      `json:"updated"`
+	Skipped  int      `json:"skipped"`
+	Errors   []string `json:"errors"`
+}
+
+func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	username, _ := c.Get("username")
+
+	idsParam := c.Query("ids")
+	var monitors []model.Monitor
+
+	if idsParam != "" {
+		var ids []int
+		_ = json.Unmarshal([]byte(idsParam), &ids)
+		if len(ids) > 0 {
+			h.DB.Where("user_id = ? AND id IN ?", userID, ids).Find(&monitors)
+		}
+	} else {
+		h.DB.Where("user_id = ?", userID).Find(&monitors)
+	}
+
+	exportMonitors := make([]ExportMonitor, len(monitors))
+
+	notifNameSet := make(map[string]*model.Notification)
+
+	for i, m := range monitors {
+		var tags []model.Tag
+		h.DB.Raw(`
+			SELECT t.* FROM tags t
+			JOIN monitor_tags mt ON mt.tag_id = t.id
+			WHERE mt.monitor_id = ?
+		`, m.ID).Scan(&tags)
+
+		exportTags := make([]ExportTag, len(tags))
+		for j, t := range tags {
+			exportTags[j] = ExportTag{Name: t.Name, Color: t.Color}
+		}
+
+		var notifs []model.MonitorNotification
+		h.DB.Where("monitor_id = ?", m.ID).Find(&notifs)
+		notifNames := make([]string, len(notifs))
+		for j, mn := range notifs {
+			var n model.Notification
+			if err := h.DB.Where("id = ?", mn.NotificationID).First(&n).Error; err == nil {
+				notifNames[j] = n.Name
+				notifNameSet[n.Name] = &n
+			}
+		}
+
+		var acceptedCodes []string
+		_ = json.Unmarshal([]byte(m.AcceptedStatusCodes), &acceptedCodes)
+		if acceptedCodes == nil {
+			acceptedCodes = []string{"200-299"}
+		}
+
+		exportMonitors[i] = ExportMonitor{
+			Name:                m.Name,
+			Description:         m.Description,
+			Type:                m.Type,
+			Active:              true,
+			URL:                 m.URL,
+			Hostname:            m.Hostname,
+			Port:                m.Port,
+			Method:              m.Method,
+			Interval:            m.Interval,
+			Timeout:             m.Timeout,
+			MaxRetries:          m.MaxRetries,
+			RetryInterval:       m.RetryInterval,
+			ResendInterval:      m.ResendInterval,
+			IgnoreTLS:           m.IgnoreTLS,
+			UpsideDown:          m.UpsideDown,
+			MaxRedirects:        m.MaxRedirects,
+			AcceptedStatusCodes: acceptedCodes,
+			Headers:             m.Headers,
+			Body:                m.Body,
+			AuthMethod:          m.AuthMethod,
+			Keyword:             m.Keyword,
+			InvertKeyword:       m.InvertKeyword,
+			ExpiryNotification:  m.ExpiryNotification,
+			PacketSize:          m.PacketSize,
+			HTTPBodyEncoding:    m.HTTPBodyEncoding,
+			DNSResolveType:      m.DNSResolveType,
+			DNSResolveServer:    m.DNSResolveServer,
+			PingNumeric:         m.PingNumeric,
+			PingCount:           m.PingCount,
+			PingPerRequestTimeout: m.PingPerRequestTimeout,
+			Tags:                exportTags,
+			NotificationNames:   notifNames,
+		}
+	}
+
+	exportNotifs := make([]ExportNotification, 0, len(notifNameSet))
+	for _, n := range notifNameSet {
+		exportNotifs = append(exportNotifs, ExportNotification{
+			Name:   n.Name,
+			Type:   n.Type,
+			Config: maskSensitive(n.Config),
+		})
+	}
+
+	file := ExportFile{
+		Version:    "1.0",
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		ExportedBy: username.(string),
+		Monitors:   exportMonitors,
+		Notifications: exportNotifs,
+	}
+
+	c.Header("Content-Disposition", "attachment; filename=uptime_ng_export.json")
+	c.JSON(http.StatusOK, file)
+}
+
+func (h *ImportExportHandler) ImportPreview(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var req ImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	preview := ImportPreviewResponse{}
+
+	for _, em := range req.Data.Monitors {
+		var existing model.Monitor
+		err := h.DB.Where("user_id = ? AND name = ?", userID, em.Name).First(&existing).Error
+		if err == nil {
+			preview.ConflictCount++
+			preview.Conflicts = append(preview.Conflicts, ImportConflict{
+				Name:         em.Name,
+				Type:         em.Type,
+				ExistingID:   existing.ID,
+				ExistingName: existing.Name,
+			})
+		} else {
+			preview.NewCount++
+			preview.NewMonitors = append(preview.NewMonitors, em)
+			for _, t := range em.Tags {
+				addTagIfNew(&preview, t)
+			}
+		}
+	}
+
+	if preview.ConflictCount > 0 {
+		preview.Summary = "found " + itoa(preview.ConflictCount) + " conflicts, please choose a strategy"
+	} else {
+		preview.Summary = "all " + itoa(preview.NewCount) + " monitors are new, ready to import"
+	}
+
+	c.JSON(http.StatusOK, preview)
+}
+
+func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var req ImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := ImportResult{}
+	tx := h.DB.Begin()
+
+	for _, em := range req.Data.Monitors {
+		var existing model.Monitor
+		err := tx.Where("user_id = ? AND name = ?", userID, em.Name).First(&existing).Error
+
+		if err == nil {
+			switch req.Strategy {
+			case "skip":
+				result.Skipped++
+				continue
+			case "overwrite":
+				existing = applyExportMonitor(existing, em)
+				tx.Save(&existing)
+				result.Updated++
+			case "copy":
+				em.Name = em.Name + " (copy)"
+				fallthrough
+			default:
+				result.Created++
+				result.Created++ // compensate fallthrough
+				monitor := newMonitorFromExport(userID.(uint), em)
+				if err := tx.Create(&monitor).Error; err != nil {
+					result.Errors = append(result.Errors, "failed to create "+em.Name+": "+err.Error())
+					tx.Rollback()
+					c.JSON(http.StatusInternalServerError, result)
+					return
+				}
+				attachTagsAndNotifs(tx, &monitor, em)
+			}
+		} else {
+			result.Created++
+			monitor := newMonitorFromExport(userID.(uint), em)
+			if err := tx.Create(&monitor).Error; err != nil {
+				result.Errors = append(result.Errors, "failed to create "+em.Name+": "+err.Error())
+				continue
+			}
+			attachTagsAndNotifs(tx, &monitor, em)
+		}
+	}
+
+	tx.Commit()
+	result.Imported = result.Created + result.Updated
+	c.JSON(http.StatusOK, result)
+}
+
+func newMonitorFromExport(userID uint, em ExportMonitor) model.Monitor {
+	codesJSON, _ := json.Marshal(em.AcceptedStatusCodes)
+	return model.Monitor{
+		UserID:              userID,
+		Name:                em.Name,
+		Description:         em.Description,
+		Type:                em.Type,
+		Active:              em.Active,
+		URL:                 em.URL,
+		Hostname:            em.Hostname,
+		Port:                em.Port,
+		Method:              em.Method,
+		Interval:            em.Interval,
+		Timeout:             em.Timeout,
+		MaxRetries:          em.MaxRetries,
+		RetryInterval:       em.RetryInterval,
+		ResendInterval:      em.ResendInterval,
+		IgnoreTLS:           em.IgnoreTLS,
+		UpsideDown:          em.UpsideDown,
+		MaxRedirects:        em.MaxRedirects,
+		AcceptedStatusCodes: string(codesJSON),
+		Headers:             em.Headers,
+		Body:                em.Body,
+		AuthMethod:          em.AuthMethod,
+		Keyword:             em.Keyword,
+		InvertKeyword:       em.InvertKeyword,
+		ExpiryNotification:  em.ExpiryNotification,
+		PacketSize:          em.PacketSize,
+		HTTPBodyEncoding:    em.HTTPBodyEncoding,
+		DNSResolveType:      em.DNSResolveType,
+		DNSResolveServer:    em.DNSResolveServer,
+		PingNumeric:         em.PingNumeric,
+		PingCount:           em.PingCount,
+		PingPerRequestTimeout: em.PingPerRequestTimeout,
+	}
+}
+
+func applyExportMonitor(existing model.Monitor, em ExportMonitor) model.Monitor {
+	codesJSON, _ := json.Marshal(em.AcceptedStatusCodes)
+	existing.Description = em.Description
+	existing.Type = em.Type
+	existing.Active = em.Active
+	existing.URL = em.URL
+	existing.Hostname = em.Hostname
+	existing.Port = em.Port
+	existing.Method = em.Method
+	existing.Interval = em.Interval
+	existing.Timeout = em.Timeout
+	existing.MaxRetries = em.MaxRetries
+	existing.RetryInterval = em.RetryInterval
+	existing.ResendInterval = em.ResendInterval
+	existing.IgnoreTLS = em.IgnoreTLS
+	existing.UpsideDown = em.UpsideDown
+	existing.MaxRedirects = em.MaxRedirects
+	existing.AcceptedStatusCodes = string(codesJSON)
+	existing.Headers = em.Headers
+	existing.Body = em.Body
+	existing.AuthMethod = em.AuthMethod
+	existing.Keyword = em.Keyword
+	existing.InvertKeyword = em.InvertKeyword
+	existing.ExpiryNotification = em.ExpiryNotification
+	existing.PacketSize = em.PacketSize
+	existing.HTTPBodyEncoding = em.HTTPBodyEncoding
+	existing.DNSResolveType = em.DNSResolveType
+	existing.DNSResolveServer = em.DNSResolveServer
+	existing.PingNumeric = em.PingNumeric
+	existing.PingCount = em.PingCount
+	existing.PingPerRequestTimeout = em.PingPerRequestTimeout
+	return existing
+}
+
+func attachTagsAndNotifs(tx *gorm.DB, monitor *model.Monitor, em ExportMonitor) {
+	for _, et := range em.Tags {
+		if et.Name == "" {
+			continue
+		}
+		var tag model.Tag
+		if err := tx.Where("name = ?", et.Name).First(&tag).Error; err != nil {
+			tag = model.Tag{Name: et.Name, Color: et.Color}
+			tx.Create(&tag)
+		}
+		mt := model.MonitorTag{MonitorID: monitor.ID, TagID: tag.ID, Value: et.Name}
+		tx.Create(&mt)
+	}
+
+	for _, nn := range em.NotificationNames {
+		var notif model.Notification
+		if err := tx.Where("name = ?", nn).First(&notif).Error; err == nil {
+			mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: notif.ID}
+			tx.Create(&mn)
+		}
+	}
+}
+
+func addTagIfNew(preview *ImportPreviewResponse, et ExportTag) {
+	for _, existing := range preview.NewTags {
+		if existing.Name == et.Name {
+			return
+		}
+	}
+	preview.NewTags = append(preview.NewTags, et)
+}
+
+func maskSensitive(config string) string {
+	return config // stub - will mask password/secrets in production
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	s := ""
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	for n > 0 {
+		s = string(rune('0'+n%10)) + s
+		n /= 10
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
+}

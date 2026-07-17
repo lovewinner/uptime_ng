@@ -1,0 +1,25 @@
+server:
+  host: 0.0.0.0
+  port: 3000
+
+database:
+  host: localhost
+  port: 5432
+  user: uptime
+  password: uptime123
+  dbname: uptime_ng
+  sslmode: disable
+
+jwt:
+  secret: change-me-in-production
+  expirehours: 72
+
+smtp:
+  host: ""
+  port: 587
+  username: ""
+  password: ""
+  from: ""
+
+feishu:
+  webhook_url: ""

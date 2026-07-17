@@ -1,0 +1,45 @@
+# Binaries
+uptime_ng
+uptime_ng.exe
+
+# Frontend build
+dist/
+web/node_modules/
+web/.env
+web/.env.local
+web/.env.*.local
+web/*.log
+web/npm-debug.log*
+web/yarn-debug.log*
+web/yarn-error.log*
+web/pnpm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# Database data
+data/
+pgdata/
+
+# Go
+*.test
+coverage.txt
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test data
+test/data/
+
+# Temporary files
+*.tmp
+*.temp

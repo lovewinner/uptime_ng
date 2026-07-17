@@ -1,0 +1,106 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/gin-gonic/gin"
+	"github.com/robfig/cron/v3"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+
+	"uptime_ng/internal/config"
+	"uptime_ng/internal/engine"
+	"uptime_ng/internal/handler"
+	"uptime_ng/internal/model"
+	"uptime_ng/internal/router"
+)
+
+func main() {
+	if err := config.Load(); err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	dsn := config.AppConfig.Database.DSN()
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		PrepareStmt: true,
+	})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(10)
+
+	log.Println("Database connected successfully")
+
+	if err := db.AutoMigrate(
+		&model.User{},
+		&model.Monitor{},
+		&model.Heartbeat{},
+		&model.StatMinutely{},
+		&model.StatHourly{},
+		&model.StatDaily{},
+		&model.Notification{},
+		&model.MonitorNotification{},
+		&model.Tag{},
+		&model.MonitorTag{},
+		&model.Incident{},
+		&model.SLAReport{},
+		&model.Setting{},
+	); err != nil {
+		log.Fatalf("Failed to auto-migrate: %v", err)
+	}
+
+	log.Println("Database migration completed")
+
+	gin.SetMode(gin.ReleaseMode)
+
+	r := gin.New()
+	r.Use(gin.Logger())
+	r.Use(gin.Recovery())
+
+	router.Setup(r, db)
+
+	sch := engine.NewScheduler(db)
+	if err := sch.StartAll(); err != nil {
+		log.Printf("Warning: Failed to start monitors: %v", err)
+	}
+	log.Printf("Scheduler started with %d monitors", sch.RunningCount())
+
+	c := cron.New()
+	c.AddFunc("@every 5m", func() {
+		var monitors []model.Monitor
+		db.Where("active = ?", true).Find(&monitors)
+		for _, m := range monitors {
+			calc := engine.NewUptimeCalculator(m.ID, db)
+			calc.Init()
+			calc.CleanupOldData()
+		}
+		log.Printf("Stat cleanup completed")
+	})
+	c.Start()
+
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		log.Println("Shutting down...")
+		sch.StopAll()
+		sqlDB.Close()
+		os.Exit(0)
+	}()
+
+	addr := fmt.Sprintf("%s:%d", config.AppConfig.Server.Host, config.AppConfig.Server.Port)
+	log.Printf("uptime_ng server starting on %s", addr)
+	log.Printf("WebSocket hub running: %v", handler.Hub != nil)
+	log.Printf("Monitor scheduler running: %d monitors", sch.RunningCount())
+
+	if err := r.Run(addr); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
+}
