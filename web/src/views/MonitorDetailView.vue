@@ -35,8 +35,8 @@ const loading = ref(false)
 const pingChartOption = computed(() => ({
   color: ['#E6A23C', '#409EFF', '#67C23A'],
   tooltip: { trigger: 'axis' },
-  legend: { data: ['平均响应', '最大响应', '最小响应'], bottom: 8, left: 'center', icon: 'roundRect', itemWidth: 20 },
-  grid: { left: 50, right: 20, top: 30, bottom: 50 },
+  legend: { data: ['平均响应', '最大响应', '最小响应'], top: 0, right: 0, icon: 'roundRect', itemWidth: 20 },
+  grid: { left: 50, right: 20, top: 40, bottom: 30 },
   xAxis: {
     type: 'time',
     minInterval: 3600 * 1000,
