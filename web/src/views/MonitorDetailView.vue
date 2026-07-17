@@ -40,7 +40,7 @@ const loading = ref(false)
 const beatsContainer = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
 const allBeats = ref<any[]>([])
-const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 16)))
+const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 20)))
 const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
 
 async function loadBeats() {
@@ -243,7 +243,7 @@ onMounted(async () => {
             :class="['beat-cell', { 'beat-pop': i === heartbeatList.length - 1 }]"
             :title="`${new Date(beat.time).toLocaleString('zh-CN')} · ${statusText(beat.status)} · ${formatPing(beat.ping_ms)}`"
             :style="{
-              width: '14px', height: '14px', borderRadius: '2px',
+              width: '18px', height: '12px', borderRadius: '2px',
               flexShrink: 0, cursor: 'pointer',
               backgroundColor: beat.status === 1 ? '#67C23A' : '#F56C6C',
             }"
@@ -305,11 +305,11 @@ onMounted(async () => {
   position: absolute !important;
 }
 .beat-enter-from {
-  transform: translateX(16px);
+  transform: translateX(20px);
   opacity: 0;
 }
 .beat-leave-to {
-  transform: translateX(-16px) !important;
+  transform: translateX(-20px) !important;
   opacity: 0;
 }
 
