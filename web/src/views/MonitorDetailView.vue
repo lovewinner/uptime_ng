@@ -45,6 +45,8 @@ const pingChartOption = computed(() => ({
   yAxis: {
     type: 'value',
     name: 'ms',
+    nameLocation: 'middle',
+    nameGap: 40,
   },
   series: [
     {
