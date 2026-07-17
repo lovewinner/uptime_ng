@@ -38,6 +38,8 @@ const pingChartOption = computed(() => ({
   grid: { left: 50, right: 20, top: 30, bottom: 30 },
   xAxis: {
     type: 'time',
+    minInterval: 3600 * 1000,
+    axisLabel: { formatter: '{HH}:00' },
   },
   yAxis: {
     type: 'value',
