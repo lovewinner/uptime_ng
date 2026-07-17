@@ -317,7 +317,7 @@ onMounted(async () => {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .beat-cell:hover {
-  transform: scale(1.6);
+  transform: scaleY(1.6);
   z-index: 10;
   box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
