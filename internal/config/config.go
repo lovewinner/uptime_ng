@@ -84,6 +84,7 @@ func Load() error {
 	viper.AddConfigPath("/etc/uptime_ng")
 
 	viper.SetEnvPrefix("UPTIME_NG")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
 	viper.SetDefault("server.host", "0.0.0.0")
