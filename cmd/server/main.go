@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"uptime_ng/internal/config"
 	"uptime_ng/internal/engine"
@@ -27,6 +28,7 @@ func main() {
 	dsn := config.AppConfig.Database.DSN()
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		PrepareStmt: true,
+		Logger:      logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
