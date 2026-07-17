@@ -16,28 +16,35 @@ const store = useMonitorStore()
 const monitorId = computed(() => Number(route.params.id))
 
 const windowWidth = ref(window.innerWidth)
+let beatsObserver: ResizeObserver | null = null
 
 function onResize() {
   windowWidth.value = window.innerWidth
 }
 onMounted(() => window.addEventListener('resize', onResize))
-onUnmounted(() => window.removeEventListener('resize', onResize))
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+  beatsObserver?.disconnect()
+})
 
 const descColumns = computed(() => windowWidth.value < 640 ? 1 : windowWidth.value < 1024 ? 2 : 3)
 
 const monitor = ref<any>(null)
-const heartbeatList = ref<any[]>([])
 const incidentList = ref<any[]>([])
 const pingChartData = ref<any[]>([])
 const uptimeChartData = ref<any[]>([])
 const loading = ref(false)
-const beatCount = ref(50)
+
+const beatsContainer = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
+const allBeats = ref<any[]>([])
+const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 16)))
+const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
 
 async function loadBeats() {
   const id = monitorId.value
   const res = await api.get(`/monitors/${id}/beats`, { params: { period: 86400 } })
-  const beats = res.data || []
-  heartbeatList.value = beats.slice(-beatCount.value)
+  allBeats.value = res.data || []
 }
 
 const pingChartOption = computed(() => ({
@@ -152,6 +159,14 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+
+  if (beatsContainer.value) {
+    containerWidth.value = beatsContainer.value.clientWidth
+    beatsObserver = new ResizeObserver(entries => {
+      containerWidth.value = entries[0]?.contentRect?.width ?? containerWidth.value
+    })
+    beatsObserver.observe(beatsContainer.value)
+  }
 })
 </script>
 
@@ -212,14 +227,9 @@ onMounted(async () => {
 
       <el-card shadow="never" style="margin-bottom: 24px">
         <template #header>
-          <div style="display: flex; align-items: center; gap: 12px">
-            <span>最近心跳记录</span>
-            <el-input-number v-model="beatCount" :min="10" :max="500" size="small" style="width: 100px"
-              @change="loadBeats" />
-            <span style="font-size: 12px; color: #909399">格</span>
-          </div>
+          <span>最近心跳记录（{{ beatCount }}格）</span>
         </template>
-        <div v-if="heartbeatList.length > 0" style="display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 2px; padding: 8px 0">
+        <div ref="beatsContainer" v-if="heartbeatList.length > 0" style="display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px; padding: 8px 0">
           <div
             v-for="(beat, i) in heartbeatList"
             :key="i"
