@@ -42,11 +42,13 @@ const containerWidth = ref(0)
 const allBeats = ref<any[]>([])
 const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 16)))
 const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
+const refreshKey = ref(0)
 
 async function loadBeats() {
   const id = monitorId.value
   const res = await api.get(`/monitors/${id}/beats`, { params: { period: 86400 } })
   allBeats.value = res.data || []
+  refreshKey.value++
 }
 
 const pingChartOption = computed(() => ({
@@ -238,12 +240,14 @@ onMounted(async () => {
         <div ref="beatsContainer" v-if="heartbeatList.length > 0" style="display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px; padding: 8px 0; justify-content: flex-end">
           <div
             v-for="(beat, i) in heartbeatList"
-            :key="i"
+            :key="i === heartbeatList.length - 1 ? 'last-' + refreshKey : i"
+            :class="{ 'beat-pop': i === heartbeatList.length - 1 }"
             :title="`${new Date(beat.time).toLocaleString('zh-CN')} · ${statusText(beat.status)} · ${formatPing(beat.ping_ms)}`"
             :style="{
               width: '14px', height: '14px', borderRadius: '2px',
               flexShrink: 0, cursor: 'pointer',
-              backgroundColor: beat.status === 1 ? '#67C23A' : '#F56C6C'
+              backgroundColor: beat.status === 1 ? '#67C23A' : '#F56C6C',
+              transition: 'background-color 0.3s, transform 0.15s',
             }"
           />
         </div>
@@ -290,3 +294,14 @@ onMounted(async () => {
     <el-empty v-else description="监控项不存在" />
   </div>
 </template>
+
+<style scoped>
+@keyframes beatPop {
+  0% { transform: scale(0.8); box-shadow: 0 0 0 3px rgba(103,194,58,0.4); }
+  50% { transform: scale(1.2); box-shadow: 0 0 0 8px rgba(103,194,58,0.15); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(103,194,58,0); }
+}
+.beat-pop {
+  animation: beatPop 0.35s ease-out;
+}
+</style>
