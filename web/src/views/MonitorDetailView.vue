@@ -34,7 +34,7 @@ const loading = ref(false)
 
 const pingChartOption = computed(() => ({
   tooltip: { trigger: 'axis' },
-  legend: { data: ['平均响应 (ms)'] },
+  legend: { data: ['平均响应 (ms)'], bottom: 0, left: 'center' },
   grid: { left: 50, right: 20, top: 30, bottom: 30 },
   xAxis: {
     type: 'time',
