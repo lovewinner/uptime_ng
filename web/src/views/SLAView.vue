@@ -82,9 +82,9 @@ onMounted(async () => {
 
 <template>
   <div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px">
       <h2>SLA 报表</h2>
-      <el-radio-group v-model="period" size="small" @change="handlePeriodChange">
+      <el-radio-group v-model="period" size="small" @change="handlePeriodChange" style="flex-wrap: wrap">
         <el-radio-button v-for="opt in periodOptions" :key="opt.value" :value="opt.value">
           {{ opt.label }}
         </el-radio-button>

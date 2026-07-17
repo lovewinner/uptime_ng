@@ -42,7 +42,7 @@ async function handleRegister() {
 
 <template>
   <div style="display:flex;justify-content:center;align-items:center;min-height:80vh">
-    <el-card style="width:400px">
+    <el-card style="width:90%;max-width:400px">
       <template #header>
         <h2 style="text-align:center;margin:0">uptime_ng</h2>
       </template>

@@ -160,7 +160,7 @@ function handleClose() {
   <el-dialog
     v-model="dialogVisible"
     :title="title"
-    width="680px"
+    width="min(680px, 95%)"
     :close-on-click-modal="false"
     destroy-on-close
   >

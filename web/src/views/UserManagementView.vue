@@ -55,7 +55,7 @@ onMounted(fetchUsers)
           <el-tag :type="row.active ? 'success' : 'danger'" size="small">{{ row.active ? '启用' : '禁用' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="200">
+      <el-table-column label="操作" width="170">
         <template #default="{ row }">
           <el-button size="small" @click="toggleRole(row)">{{ row.role === 'admin' ? '降级' : '提升为管理员' }}</el-button>
           <el-button size="small" :type="row.active ? 'danger' : 'success'" @click="toggleActive(row)">

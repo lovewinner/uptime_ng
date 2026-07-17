@@ -29,7 +29,7 @@ function uptimePercent(v: number) {
     </div>
 
     <el-row :gutter="16">
-      <el-col v-for="s in store.statusList" :key="s.id" :span="8" style="margin-bottom: 16px">
+      <el-col v-for="s in store.statusList" :key="s.id" :xs="24" :sm="12" :md="8" :lg="6" style="margin-bottom: 16px">
         <el-card shadow="hover" style="cursor: pointer" @click="goMonitor(s.id)">
           <div style="display: flex; justify-content: space-between; align-items: center">
             <div>

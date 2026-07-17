@@ -30,7 +30,7 @@ function exportSelected() {
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="导出监控配置" width="500px">
+  <el-dialog v-model="visible" title="导出监控配置" width="min(500px, 95%)">
     <p>选择导出范围：</p>
     <el-radio-group v-model="chosen">
       <el-radio value="all">导出全部监控项 ({{ monitors.length }})</el-radio>

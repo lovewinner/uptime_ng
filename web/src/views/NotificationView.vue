@@ -128,7 +128,7 @@ onMounted(() => {
 
 <template>
   <div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px">
       <h2>通知管理</h2>
       <el-button type="primary" @click="handleCreate">新增通知</el-button>
     </div>
@@ -154,7 +154,7 @@ onMounted(() => {
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="handleEdit(row)">编辑</el-button>
           <el-button size="small" type="warning" @click="handleTest(row)">测试</el-button>
@@ -168,7 +168,7 @@ onMounted(() => {
     <el-dialog
       v-model="dialogVisible"
       :title="isEdit ? '编辑通知' : '新增通知'"
-      width="500px"
+      width="min(500px, 95%)"
       :close-on-click-modal="false"
       destroy-on-close
     >

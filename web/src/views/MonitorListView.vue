@@ -102,9 +102,9 @@ function handleImported() {
 
 <template>
   <div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px">
       <h2>监控列表</h2>
-      <div style="display: flex; gap: 10px">
+      <div style="display: flex; gap: 8px; flex-wrap: wrap">
         <el-button @click="exportVisible = true">导出</el-button>
         <el-button @click="importVisible = true">导入</el-button>
         <el-button type="primary" @click="handleCreate">新增监控</el-button>

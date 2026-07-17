@@ -74,7 +74,7 @@ function close() {
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="导入监控配置" width="600px" @close="close">
+  <el-dialog v-model="visible" title="导入监控配置" width="min(600px, 95%)" @close="close">
     <div v-if="step === 'upload'">
       <p>选择 uptime_ng 导出的 JSON 文件：</p>
       <input ref="fileInput" type="file" accept=".json" @change="handleFileChange" style="margin-bottom:15px" />

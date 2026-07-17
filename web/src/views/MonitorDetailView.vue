@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '@/api/http'
 import { useMonitorStore } from '@/stores/monitor'
@@ -14,6 +14,16 @@ use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, Legen
 const route = useRoute()
 const store = useMonitorStore()
 const monitorId = computed(() => Number(route.params.id))
+
+const windowWidth = ref(window.innerWidth)
+
+function onResize() {
+  windowWidth.value = window.innerWidth
+}
+onMounted(() => window.addEventListener('resize', onResize))
+onUnmounted(() => window.removeEventListener('resize', onResize))
+
+const descColumns = computed(() => windowWidth.value < 640 ? 1 : windowWidth.value < 1024 ? 2 : 3)
 
 const monitor = ref<any>(null)
 const heartbeatList = ref<any[]>([])
@@ -139,7 +149,7 @@ onMounted(async () => {
         </template>
       </el-page-header>
 
-      <el-descriptions :column="3" border style="margin-bottom: 24px">
+      <el-descriptions :column="descColumns" border style="margin-bottom: 24px">
         <el-descriptions-item label="名称">{{ monitor.name }}</el-descriptions-item>
         <el-descriptions-item label="类型">
           <el-tag size="small">{{ monitor.type.toUpperCase() }}</el-tag>
@@ -165,7 +175,7 @@ onMounted(async () => {
       </el-descriptions>
 
       <el-row :gutter="20" style="margin-bottom: 24px">
-        <el-col :span="12">
+        <el-col :xs="24" :md="12">
           <el-card shadow="never">
             <template #header>
               <span>24小时响应时间</span>
@@ -174,7 +184,7 @@ onMounted(async () => {
             <el-empty v-else description="暂无响应时间数据" :image-size="80" />
           </el-card>
         </el-col>
-        <el-col :span="12">
+        <el-col :xs="24" :md="12">
           <el-card shadow="never">
             <template #header>
               <span>30天可用率</span>
