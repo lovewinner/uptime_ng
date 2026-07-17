@@ -42,13 +42,11 @@ const containerWidth = ref(0)
 const allBeats = ref<any[]>([])
 const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 16)))
 const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
-const refreshKey = ref(0)
 
 async function loadBeats() {
   const id = monitorId.value
   const res = await api.get(`/monitors/${id}/beats`, { params: { period: 86400 } })
   allBeats.value = res.data || []
-  refreshKey.value++
 }
 
 const pingChartOption = computed(() => ({
@@ -237,20 +235,20 @@ onMounted(async () => {
         <template #header>
           <span>最近心跳记录（{{ beatCount }}格）</span>
         </template>
-        <div ref="beatsContainer" v-if="heartbeatList.length > 0" style="display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px; padding: 8px 0; justify-content: flex-end">
+        <TransitionGroup ref="beatsContainer" name="beat" tag="div" v-if="heartbeatList.length > 0"
+          style="display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px; padding: 8px 0; justify-content: flex-end; position: relative">
           <div
             v-for="(beat, i) in heartbeatList"
-            :key="i === heartbeatList.length - 1 ? 'last-' + refreshKey : i"
+            :key="beat.id ?? i"
             :class="{ 'beat-pop': i === heartbeatList.length - 1 }"
             :title="`${new Date(beat.time).toLocaleString('zh-CN')} · ${statusText(beat.status)} · ${formatPing(beat.ping_ms)}`"
             :style="{
               width: '14px', height: '14px', borderRadius: '2px',
               flexShrink: 0, cursor: 'pointer',
               backgroundColor: beat.status === 1 ? '#67C23A' : '#F56C6C',
-              transition: 'background-color 0.3s, transform 0.15s',
             }"
           />
-        </div>
+        </TransitionGroup>
         <el-empty v-else description="暂无心跳记录" :image-size="60" />
       </el-card>
 
@@ -296,6 +294,25 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.beat-move {
+  transition: transform 0.35s ease;
+}
+.beat-enter-active {
+  transition: all 0.35s ease;
+}
+.beat-leave-active {
+  transition: all 0.35s ease;
+  position: absolute !important;
+}
+.beat-enter-from {
+  transform: translateX(16px);
+  opacity: 0;
+}
+.beat-leave-to {
+  transform: translateX(-16px) !important;
+  opacity: 0;
+}
+
 @keyframes beatPop {
   0% { transform: scale(0.8); box-shadow: 0 0 0 3px rgba(103,194,58,0.4); }
   50% { transform: scale(1.2); box-shadow: 0 0 0 8px rgba(103,194,58,0.15); }
