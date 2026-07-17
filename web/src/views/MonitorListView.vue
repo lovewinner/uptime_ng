@@ -118,9 +118,15 @@ function handleImported() {
       v-loading="store.loading"
       stripe
       style="width: 100%"
-      @row-click="goDetail"
+      @row-click="(row: any) => goDetail(row.id)"
     >
-      <el-table-column prop="name" label="名称" min-width="150" />
+      <el-table-column label="名称" min-width="150">
+        <template #default="{ row }">
+          <el-link type="primary" :underline="false" @click.stop="goDetail(row.id)">
+            {{ row.name }}
+          </el-link>
+        </template>
+      </el-table-column>
       <el-table-column prop="type" label="类型" width="80">
         <template #default="{ row }">
           <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
