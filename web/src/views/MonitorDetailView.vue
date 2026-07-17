@@ -229,7 +229,7 @@ onMounted(async () => {
         <template #header>
           <span>最近心跳记录（{{ beatCount }}格）</span>
         </template>
-        <div ref="beatsContainer" v-if="heartbeatList.length > 0" style="display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px; padding: 8px 0">
+        <div ref="beatsContainer" v-if="heartbeatList.length > 0" style="display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px; padding: 8px 0; justify-content: flex-end">
           <div
             v-for="(beat, i) in heartbeatList"
             :key="i"
