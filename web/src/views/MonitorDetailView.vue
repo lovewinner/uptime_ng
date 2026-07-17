@@ -154,7 +154,7 @@ onMounted(async () => {
         <el-descriptions-item label="类型">
           <el-tag size="small">{{ monitor.type.toUpperCase() }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="URL / 主机名">
+        <el-descriptions-item :label="monitor.type === 'ping' ? '主机名' : 'URL / 主机名'">
           {{ monitor.url || monitor.hostname || '-' }}
         </el-descriptions-item>
         <el-descriptions-item label="检查间隔">
