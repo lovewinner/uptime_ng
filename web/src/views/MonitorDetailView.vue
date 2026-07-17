@@ -17,6 +17,7 @@ const monitorId = computed(() => Number(route.params.id))
 
 const windowWidth = ref(window.innerWidth)
 let beatsObserver: ResizeObserver | null = null
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 function onResize() {
   windowWidth.value = window.innerWidth
@@ -25,6 +26,7 @@ onMounted(() => window.addEventListener('resize', onResize))
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
   beatsObserver?.disconnect()
+  if (refreshTimer) clearInterval(refreshTimer)
 })
 
 const descColumns = computed(() => windowWidth.value < 640 ? 1 : windowWidth.value < 1024 ? 2 : 3)
@@ -153,6 +155,10 @@ onMounted(async () => {
     pingChartData.value = pingRes.data || []
     uptimeChartData.value = uptimeRes.data || []
     await loadBeats()
+    const interval = monitor.value?.interval
+    if (interval && interval > 0) {
+      refreshTimer = setInterval(() => loadBeats(), interval * 1000)
+    }
     incidentList.value = incidentsRes.data || []
   } catch {
     // 错误处理
