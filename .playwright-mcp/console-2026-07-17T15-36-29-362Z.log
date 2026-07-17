@@ -1,0 +1,3 @@
+[     296ms] [WARNING] [VUE_ROUTER_R0025] The `next()` callback in navigation guards is deprecated.
+├▶ fix: Return the value instead: `next()` becomes `return`, `next(false)` becomes `return false`, `next("/path")` becomes `return "/path"`.
+╰▶ see: https://router.vuejs.org/guide/advanced/navigation-guards.html#Optional-third-argument-next @ http://10.14.25.86:5173/node_modules/.vite/deps/vue-router.js?v=ea0d8ade:39

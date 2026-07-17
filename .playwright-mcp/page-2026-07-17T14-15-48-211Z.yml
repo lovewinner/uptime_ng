@@ -1,0 +1,26 @@
+- generic [ref=e3]:
+  - generic [ref=e33]:
+    - heading "uptime_ng" [level=1] [ref=e35] [cursor=pointer]
+    - navigation [ref=e36]:
+      - button "仪表盘" [ref=e37] [cursor=pointer]
+      - button "监控项" [ref=e39] [cursor=pointer]
+      - button "通知" [ref=e41] [cursor=pointer]
+      - button "SLA报表" [ref=e43] [cursor=pointer]
+      - button "用户管理" [ref=e45] [cursor=pointer]
+    - generic [ref=e47]:
+      - generic [ref=e48]: lovewinner
+      - button "退出" [ref=e49] [cursor=pointer]
+  - main [ref=e4]:
+    - generic [ref=e51]:
+      - heading "仪表盘" [level=2] [ref=e52]
+      - generic [ref=e53]:
+        - generic "监控项总数"
+        - button "管理监控项" [ref=e54] [cursor=pointer]
+      - generic [ref=e60] [cursor=pointer]:
+        - generic [ref=e61]:
+          - heading "test" [level=4] [ref=e62]
+          - generic [ref=e63]: PING
+        - generic [ref=e65]:
+          - generic [ref=e66]: DOWN
+          - generic [ref=e68]: "-"
+          - generic [ref=e69]: "24h: 100.00%"

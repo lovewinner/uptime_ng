@@ -1,0 +1,15 @@
+- main [ref=e4]:
+  - generic [ref=e6]:
+    - heading "uptime_ng" [level=2] [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - generic [ref=e11]:
+          - generic [ref=e12]: 用户名
+          - textbox "用户名" [ref=e16]:
+            - /placeholder: 请输入用户名
+        - generic [ref=e17]:
+          - generic [ref=e18]: 密码
+          - textbox "密码" [ref=e22]:
+            - /placeholder: 请输入密码
+        - button "登录" [ref=e23] [cursor=pointer]
+      - button "没有账号？注册" [ref=e26] [cursor=pointer]

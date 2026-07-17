@@ -34,7 +34,7 @@ const loading = ref(false)
 
 const pingChartOption = computed(() => ({
   tooltip: { trigger: 'axis' },
-  legend: { data: ['平均响应 (ms)'], bottom: 0, left: 'center' },
+  legend: { data: ['平均响应', '最大响应', '最小响应'], bottom: 0, left: 'center' },
   grid: { left: 50, right: 20, top: 30, bottom: 30 },
   xAxis: {
     type: 'time',
@@ -47,13 +47,33 @@ const pingChartOption = computed(() => ({
   },
   series: [
     {
-      name: '平均响应 (ms)',
+      name: '最大响应',
+      type: 'line',
+      data: pingChartData.value
+        .filter((d: any) => d.up > 0)
+        .map((d: any) => [new Date(d.timestamp * 1000), d.max_ping !== undefined ? Number(d.max_ping) : 0]),
+      smooth: true,
+      lineStyle: { type: 'dashed', width: 1 },
+      symbol: 'none',
+    },
+    {
+      name: '平均响应',
       type: 'line',
       data: pingChartData.value
         .filter((d: any) => d.up > 0)
         .map((d: any) => [new Date(d.timestamp * 1000), d.avg_ping !== undefined ? Number(d.avg_ping) : 0]),
       smooth: true,
       areaStyle: { opacity: 0.1 },
+    },
+    {
+      name: '最小响应',
+      type: 'line',
+      data: pingChartData.value
+        .filter((d: any) => d.up > 0)
+        .map((d: any) => [new Date(d.timestamp * 1000), d.min_ping !== undefined ? Number(d.min_ping) : 0]),
+      smooth: true,
+      lineStyle: { type: 'dashed', width: 1 },
+      symbol: 'none',
     },
   ],
 }))

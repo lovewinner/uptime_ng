@@ -250,6 +250,8 @@ func (u *UptimeCalculator) GetDataPoints(granularity string, num int) []DataPoin
 				Timestamp: key,
 				Uptime:    uptime,
 				AvgPing:   bucket.AvgPing,
+				MinPing:   bucket.MinPing,
+				MaxPing:   bucket.MaxPing,
 				Up:        bucket.Up,
 				Down:      bucket.Down,
 			}}, points...)
@@ -263,6 +265,8 @@ type DataPoint struct {
 	Timestamp int64   `json:"timestamp"`
 	Uptime    float64 `json:"uptime"`
 	AvgPing   float64 `json:"avg_ping"`
+	MinPing   float64 `json:"min_ping"`
+	MaxPing   float64 `json:"max_ping"`
 	Up        uint32  `json:"up"`
 	Down      uint32  `json:"down"`
 }

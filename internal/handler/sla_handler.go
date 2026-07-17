@@ -165,6 +165,8 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 		Timestamp int64   `json:"timestamp"`
 		Uptime    float64 `json:"uptime"`
 		AvgPing   float64 `json:"avg_ping"`
+		MinPing   float64 `json:"min_ping"`
+		MaxPing   float64 `json:"max_ping"`
 		Up        uint32  `json:"up"`
 		Down      uint32  `json:"down"`
 	}
@@ -181,7 +183,7 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 			if pts > 0 {
 				uptime = float64(s.Up) / float64(pts)
 			}
-			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, Up: s.Up, Down: s.Down}
+			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, MinPing: s.MinPing, MaxPing: s.MaxPing, Up: s.Up, Down: s.Down}
 		}
 		c.JSON(http.StatusOK, points)
 
@@ -196,7 +198,7 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 			if pts > 0 {
 				uptime = float64(s.Up) / float64(pts)
 			}
-			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, Up: s.Up, Down: s.Down}
+			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, MinPing: s.MinPing, MaxPing: s.MaxPing, Up: s.Up, Down: s.Down}
 		}
 		c.JSON(http.StatusOK, points)
 
@@ -211,7 +213,7 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 			if pts > 0 {
 				uptime = float64(s.Up) / float64(pts)
 			}
-			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, Up: s.Up, Down: s.Down}
+			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, MinPing: s.MinPing, MaxPing: s.MaxPing, Up: s.Up, Down: s.Down}
 		}
 		c.JSON(http.StatusOK, points)
 	}
