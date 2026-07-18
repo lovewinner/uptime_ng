@@ -29,7 +29,7 @@ const statusTags = ref<string[]>(['200-299'])
 const form = ref<MonitorPayload>({
   name: '',
   description: '',
-  type: 'http',
+  type: 'ping',
   group_id: null,
   url: '',
   hostname: '',
@@ -195,7 +195,7 @@ watch(
       form.value = {
         name: '',
         description: '',
-        type: 'http',
+        type: 'ping',
         group_id: null,
         url: '',
         hostname: '',
@@ -246,6 +246,12 @@ watch(
   },
   { immediate: true },
 )
+
+function handleNameBlur() {
+  if (form.value.type === 'ping' && !form.value.hostname) {
+    form.value.hostname = form.value.name
+  }
+}
 
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
@@ -305,7 +311,7 @@ function errorMessage(e: unknown, fallback: string): string {
       label-position="right"
     >
       <el-form-item label="名称" prop="name" :rules="[{ required: true, message: '请输入名称' }]">
-        <el-input v-model="form.name" placeholder="监控项名称" />
+        <el-input v-model="form.name" placeholder="监控项名称" @blur="handleNameBlur" />
       </el-form-item>
 
       <el-form-item label="描述" prop="description">

@@ -199,14 +199,11 @@ func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
 
 	var result uptimeSummary
 
-	// 24h: compute from heartbeats
-	cutoff24h := time.Now().Add(-24 * time.Hour)
-	var up24, down24 int64
-	h.DB.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff24h, model.StatusUP).Count(&up24)
-	h.DB.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff24h, model.StatusDown).Count(&down24)
-	if up24+down24 > 0 {
-		result.Uptime24H = float64(up24) / float64(up24+down24)
-	} else {
+	// 24h: reuse fillSLAFromHeartbeats for consistency
+	sla24 := SLAResult{}
+	fillSLAFromHeartbeats(h.DB, &sla24, monitor.ID, time.Now().Add(-24*time.Hour), time.Now())
+	result.Uptime24H = sla24.UptimePercentage
+	if result.Uptime24H == 0 && sla24.TotalChecks == 0 {
 		result.Uptime24H = 1.0
 	}
 
@@ -297,6 +294,9 @@ func fillSLAFromHeartbeats(db *gorm.DB, result *SLAResult, monitorID uint, start
 	var pingCount uint32
 
 	for _, beat := range beats {
+		if beat.Status == model.StatusPending {
+			continue
+		}
 		if beat.Time.After(last) && model.FlatStatus(status) == model.StatusDown {
 			downtime += beat.Time.Sub(last)
 		}

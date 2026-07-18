@@ -265,7 +265,7 @@ onMounted(async () => {
         </template>
         <el-table :data="childMonitors" size="small" stripe>
           <el-table-column prop="name" label="名称" min-width="160" />
-          <el-table-column prop="type" label="类型" width="90">
+          <el-table-column prop="type" label="类型" width="160">
             <template #default="{ row }">
               <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
             </template>

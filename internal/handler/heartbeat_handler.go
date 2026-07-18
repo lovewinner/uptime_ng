@@ -80,6 +80,13 @@ func (h *HeartbeatHandler) GetIncidents(c *gin.Context) {
 		Limit(100).
 		Find(&incidents)
 
+	now := time.Now()
+	for i := range incidents {
+		if incidents[i].EndedAt == nil {
+			incidents[i].DurationSec = uint32(now.Sub(incidents[i].StartedAt).Seconds())
+		}
+	}
+
 	c.JSON(http.StatusOK, incidents)
 }
 

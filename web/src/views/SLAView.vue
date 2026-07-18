@@ -99,7 +99,7 @@ onMounted(async () => {
           </el-link>
         </template>
       </el-table-column>
-      <el-table-column label="类型" width="80">
+      <el-table-column label="类型" width="130">
         <template #default="{ row }">
           <el-tag size="small">{{ row.monitor_type.toUpperCase() }}</el-tag>
         </template>

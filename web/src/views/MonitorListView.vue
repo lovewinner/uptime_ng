@@ -212,7 +212,7 @@ async function refreshRowStatus(row: MonitorTreeNode) {
           </el-link>
         </template>
       </el-table-column>
-      <el-table-column prop="type" label="类型" width="80">
+      <el-table-column prop="type" label="类型" width="130">
         <template #default="{ row }">
           <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
         </template>
