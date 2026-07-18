@@ -99,7 +99,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 	monitor := newMonitorFromRequest(userID, req)
 
 	if err := runTransaction(h.DB, func(tx *gorm.DB) error {
-		if err := tx.Create(&monitor).Error; err != nil {
+		if err := createMonitor(tx, &monitor); err != nil {
 			return err
 		}
 		return attachMonitorAssociations(tx, monitor.ID, req.NotificationIDs, req.TagNames, req.TagColors)
@@ -108,9 +108,9 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if monitor.Active && h.Scheduler != nil {
+	if shouldRunScheduledMonitor(monitor) && h.Scheduler != nil {
 		if err := h.Scheduler.StartMonitor(&monitor); err != nil {
-			errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_start_failed", err.Error())
+			errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_start_failed", rollbackCreatedMonitor(h.DB, h.Scheduler, monitor, err).Error())
 			return
 		}
 	}
@@ -210,9 +210,9 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	}
 
 	if h.Scheduler != nil {
-		if monitor.Active {
+		if shouldRunScheduledMonitor(monitor) {
 			if err := h.Scheduler.RestartMonitor(&monitor); err != nil {
-				errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_restart_failed", err.Error())
+				errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_restart_failed", deactivateMonitorAfterSchedulerFailure(h.DB, h.Scheduler, &monitor, err).Error())
 				return
 			}
 		} else {
@@ -269,13 +269,8 @@ func (h *MonitorHandler) Resume(c *gin.Context) {
 		errorResponse(c, http.StatusInternalServerError, "monitor_descendants_failed", err.Error())
 		return
 	}
-	ids := monitorIDs(monitors)
-	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", true).Error; err != nil {
+	if err := setMonitorActivation(h.DB, h.Scheduler, monitors, true); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_resume_failed", err.Error())
-		return
-	}
-	if err := restartMonitors(h.Scheduler, monitors); err != nil {
-		errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_restart_failed", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "monitor resumed"})
@@ -299,12 +294,10 @@ func (h *MonitorHandler) Pause(c *gin.Context) {
 		errorResponse(c, http.StatusInternalServerError, "monitor_descendants_failed", err.Error())
 		return
 	}
-	ids := monitorIDs(monitors)
-	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", false).Error; err != nil {
+	if err := setMonitorActivation(h.DB, h.Scheduler, monitors, false); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_pause_failed", err.Error())
 		return
 	}
-	stopMonitors(h.Scheduler, monitors)
 	c.JSON(http.StatusOK, gin.H{"message": "monitor paused"})
 }
 

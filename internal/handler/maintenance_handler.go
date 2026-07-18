@@ -52,7 +52,7 @@ func (h *MaintenanceHandler) Create(c *gin.Context) {
 		badRequest(c, validationErr.code, validationErr.message)
 		return
 	}
-	if err := h.DB.Create(&window).Error; err != nil {
+	if err := createMaintenanceWindow(h.DB, &window); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "maintenance_create_failed", err.Error())
 		return
 	}
@@ -126,4 +126,18 @@ func (h *MaintenanceHandler) buildMaintenanceWindow(req MaintenanceRequest, user
 	}
 
 	return window, nil, nil
+}
+
+func createMaintenanceWindow(db *gorm.DB, window *model.MaintenanceWindow) error {
+	active := window.Active
+	return runTransaction(db, func(tx *gorm.DB) error {
+		if err := tx.Create(window).Error; err != nil {
+			return err
+		}
+		if active {
+			return nil
+		}
+		window.Active = false
+		return tx.Model(&model.MaintenanceWindow{}).Where("id = ?", window.ID).Update("active", false).Error
+	})
 }

@@ -28,9 +28,10 @@ type schedulerCall struct {
 }
 
 type fakeScheduler struct {
-	calls      []schedulerCall
-	startErr   error
-	restartErr error
+	calls         []schedulerCall
+	startErr      error
+	restartErr    error
+	restartErrFor map[uint]error
 }
 
 var testDBSeq uint64
@@ -46,7 +47,24 @@ func (s *fakeScheduler) StopMonitor(id uint) {
 
 func (s *fakeScheduler) RestartMonitor(m *model.Monitor) error {
 	s.calls = append(s.calls, schedulerCall{action: "restart", id: m.ID})
+	if s.restartErrFor != nil {
+		if err, ok := s.restartErrFor[m.ID]; ok {
+			return err
+		}
+	}
 	return s.restartErr
+}
+
+func assertSchedulerCalls(t *testing.T, scheduler *fakeScheduler, want []schedulerCall) {
+	t.Helper()
+	if len(scheduler.calls) != len(want) {
+		t.Fatalf("scheduler calls=%+v want %+v", scheduler.calls, want)
+	}
+	for i := range want {
+		if scheduler.calls[i] != want[i] {
+			t.Fatalf("scheduler calls=%+v want %+v", scheduler.calls, want)
+		}
+	}
 }
 
 func testDB(t *testing.T) *gorm.DB {
@@ -290,12 +308,19 @@ func TestMonitorLookupDatabaseErrorReturnsServerError(t *testing.T) {
 func TestCreateMonitorReturnsSchedulerStartErrors(t *testing.T) {
 	db := testDB(t)
 	schedulerErr := errors.New("scheduler unavailable")
-	r, user := setupRouter(t, db, &fakeScheduler{startErr: schedulerErr})
+	scheduler := &fakeScheduler{startErr: schedulerErr}
+	r, user := setupRouter(t, db, scheduler)
 	token := authToken(t, user)
+	notification := model.Notification{UserID: user.ID, Name: "ops", Type: model.NotificationTypeEmail, Config: `{"to":"ops@example.com"}`, Active: true}
+	if err := db.Create(&notification).Error; err != nil {
+		t.Fatalf("create notification: %v", err)
+	}
 
 	resp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
-		"name": "group",
-		"type": model.MonitorTypeGroup,
+		"name":             "group",
+		"type":             model.MonitorTypeGroup,
+		"notification_ids": []uint{notification.ID},
+		"tag_names":        []string{"prod"},
 	}, token)
 	if resp.Code != http.StatusInternalServerError {
 		t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
@@ -306,6 +331,170 @@ func TestCreateMonitorReturnsSchedulerStartErrors(t *testing.T) {
 	}
 	if body["code"] != "monitor_scheduler_start_failed" {
 		t.Fatalf("body=%v", body)
+	}
+	var monitorCount int64
+	if err := db.Model(&model.Monitor{}).Where("user_id = ? AND name = ?", user.ID, "group").Count(&monitorCount).Error; err != nil {
+		t.Fatalf("count monitors: %v", err)
+	}
+	if monitorCount != 0 {
+		t.Fatalf("monitor count=%d want rollback to 0", monitorCount)
+	}
+	var notificationLinks int64
+	if err := db.Model(&model.MonitorNotification{}).Count(&notificationLinks).Error; err != nil {
+		t.Fatalf("count notification links: %v", err)
+	}
+	if notificationLinks != 0 {
+		t.Fatalf("notification links=%d want rollback to 0", notificationLinks)
+	}
+	var tagLinks int64
+	if err := db.Model(&model.MonitorTag{}).Count(&tagLinks).Error; err != nil {
+		t.Fatalf("count tag links: %v", err)
+	}
+	if tagLinks != 0 {
+		t.Fatalf("tag links=%d want rollback to 0", tagLinks)
+	}
+	var tagCount int64
+	if err := db.Model(&model.Tag{}).Where("name = ?", "prod").Count(&tagCount).Error; err != nil {
+		t.Fatalf("count tags: %v", err)
+	}
+	if tagCount != 0 {
+		t.Fatalf("tag count=%d want rollback to 0", tagCount)
+	}
+	wantCalls := []schedulerCall{
+		{action: "start", id: 1},
+		{action: "stop", id: 1},
+	}
+	assertSchedulerCalls(t, scheduler, wantCalls)
+}
+
+func TestCreateMonitorPreservesDisabledExpiryNotification(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	resp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
+		"name":                "site",
+		"type":                model.MonitorTypeHTTP,
+		"url":                 "https://example.com",
+		"expiry_notification": false,
+	}, token)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("create code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var created model.Monitor
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode monitor: %v", err)
+	}
+	if created.ExpiryNotification {
+		t.Fatal("response should preserve expiry_notification=false")
+	}
+	var stored model.Monitor
+	if err := db.First(&stored, created.ID).Error; err != nil {
+		t.Fatalf("load monitor: %v", err)
+	}
+	if stored.ExpiryNotification {
+		t.Fatal("stored monitor should preserve expiry_notification=false")
+	}
+}
+
+func TestPushMonitorMutationsDoNotStartScheduler(t *testing.T) {
+	db := testDB(t)
+	scheduler := &fakeScheduler{}
+	r, user := setupRouter(t, db, scheduler)
+	token := authToken(t, user)
+
+	createResp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
+		"name": "push",
+		"type": model.MonitorTypePush,
+	}, token)
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create code=%d body=%s", createResp.Code, createResp.Body.String())
+	}
+	var created model.Monitor
+	if err := json.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode monitor: %v", err)
+	}
+	if len(scheduler.calls) != 0 {
+		t.Fatalf("push create should not start scheduler: %+v", scheduler.calls)
+	}
+
+	updateResp := authedRequest(t, r, http.MethodPut, fmt.Sprintf("/api/monitors/%d", created.ID), gin.H{
+		"name": "push updated",
+		"type": model.MonitorTypePush,
+	}, token)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update code=%d body=%s", updateResp.Code, updateResp.Body.String())
+	}
+	assertSchedulerCalls(t, scheduler, []schedulerCall{{action: "stop", id: created.ID}})
+}
+
+func TestCreateMonitorRollsBackDefaultCorrectionErrors(t *testing.T) {
+	db := testDB(t)
+	wantErr := errors.New("monitor default correction failed")
+	db.Callback().Update().Before("gorm:update").Register("test_fail_monitor_default_correction", func(tx *gorm.DB) {
+		if strings.Contains(tx.Statement.Table, "monitors") {
+			tx.AddError(wantErr)
+		}
+	})
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	resp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
+		"name":                "site",
+		"type":                model.MonitorTypeHTTP,
+		"url":                 "https://example.com",
+		"expiry_notification": false,
+	}, token)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("create code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["code"] != "monitor_create_failed" {
+		t.Fatalf("body=%v", body)
+	}
+	var monitorCount int64
+	if err := db.Model(&model.Monitor{}).Where("name = ?", "site").Count(&monitorCount).Error; err != nil {
+		t.Fatalf("count monitors: %v", err)
+	}
+	if monitorCount != 0 {
+		t.Fatalf("monitor count=%d want rollback to 0", monitorCount)
+	}
+}
+
+func TestCreateMonitorRollsBackMonitorWhenAssociationsFail(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+	if err := db.Migrator().DropTable(&model.MonitorNotification{}); err != nil {
+		t.Fatalf("drop monitor notifications: %v", err)
+	}
+
+	resp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
+		"name":             "site",
+		"type":             model.MonitorTypeHTTP,
+		"url":              "https://example.com",
+		"notification_ids": []uint{1},
+	}, token)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("create code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["code"] != "monitor_create_failed" {
+		t.Fatalf("body=%v", body)
+	}
+	var monitorCount int64
+	if err := db.Model(&model.Monitor{}).Where("name = ?", "site").Count(&monitorCount).Error; err != nil {
+		t.Fatalf("count monitors: %v", err)
+	}
+	if monitorCount != 0 {
+		t.Fatalf("monitor count=%d want rollback to 0", monitorCount)
 	}
 }
 
@@ -384,20 +573,69 @@ func TestMonitorMutationsNotifyScheduler(t *testing.T) {
 		t.Fatalf("delete code=%d body=%s", deleteResp.Code, deleteResp.Body.String())
 	}
 
-	got := []string{}
-	for _, call := range scheduler.calls {
-		got = append(got, call.action)
-	}
-	want := []string{"start", "restart", "stop", "restart", "stop"}
-	if len(got) != len(want) {
-		t.Fatalf("scheduler calls=%v want=%v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("scheduler calls=%v want=%v", got, want)
-		}
-	}
+	assertSchedulerCalls(t, scheduler, []schedulerCall{
+		{action: "start", id: 1},
+		{action: "restart", id: 1},
+		{action: "stop", id: 1},
+		{action: "restart", id: 1},
+		{action: "stop", id: 1},
+	})
 	_ = created
+}
+
+func TestUpdateMonitorDeactivatesOnSchedulerRestartError(t *testing.T) {
+	db := testDB(t)
+	schedulerErr := errors.New("restart unavailable")
+	scheduler := &fakeScheduler{restartErr: schedulerErr}
+	r, user := setupRouter(t, db, scheduler)
+	token := authToken(t, user)
+
+	monitor := model.Monitor{
+		UserID:              user.ID,
+		Name:                "site",
+		Type:                model.MonitorTypeHTTP,
+		URL:                 "https://old.example.com",
+		Active:              true,
+		AcceptedStatusCodes: `["200-299"]`,
+		ExpiryNotification:  true,
+	}
+	if err := db.Create(&monitor).Error; err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	resp := authedRequest(t, r, http.MethodPut, fmt.Sprintf("/api/monitors/%d", monitor.ID), gin.H{
+		"name":     "site",
+		"type":     model.MonitorTypeHTTP,
+		"url":      "https://new.example.com",
+		"interval": 60,
+		"timeout":  5,
+	}, token)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("update code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["code"] != "monitor_scheduler_restart_failed" {
+		t.Fatalf("body=%v", body)
+	}
+
+	var stored model.Monitor
+	if err := db.First(&stored, monitor.ID).Error; err != nil {
+		t.Fatalf("load monitor: %v", err)
+	}
+	if stored.Active {
+		t.Fatal("monitor should be deactivated after scheduler restart failure")
+	}
+	if stored.URL != "https://new.example.com" {
+		t.Fatalf("updated URL=%s want persisted update", stored.URL)
+	}
+	wantCalls := []schedulerCall{
+		{action: "restart", id: monitor.ID},
+		{action: "stop", id: monitor.ID},
+	}
+	assertSchedulerCalls(t, scheduler, wantCalls)
 }
 
 func TestImportCopyCountsOnceAndRefreshesOverwriteLinks(t *testing.T) {
@@ -603,9 +841,7 @@ func TestMonitorGroupValidationAndSchedulerStart(t *testing.T) {
 	if err := json.Unmarshal(groupResp.Body.Bytes(), &group); err != nil {
 		t.Fatalf("decode group: %v", err)
 	}
-	if len(scheduler.calls) != 1 || scheduler.calls[0].action != "start" {
-		t.Fatalf("group should start scheduler: %+v", scheduler.calls)
-	}
+	assertSchedulerCalls(t, scheduler, []schedulerCall{{action: "start", id: group.ID}})
 
 	childResp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
 		"name":     "site",
@@ -759,5 +995,37 @@ func TestMaintenanceWindowCRUD(t *testing.T) {
 	deleteResp := authedRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/maintenance/%d", window.ID), nil, token)
 	if deleteResp.Code != http.StatusOK {
 		t.Fatalf("delete code=%d body=%s", deleteResp.Code, deleteResp.Body.String())
+	}
+}
+
+func TestCreateMaintenanceWindowPreservesInactive(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+	start := time.Now().Add(-time.Hour).UTC()
+
+	resp := authedRequest(t, r, http.MethodPost, "/api/maintenance", gin.H{
+		"name":     "disabled",
+		"start_at": start.Format(time.RFC3339),
+		"end_at":   start.Add(time.Hour).Format(time.RFC3339),
+		"active":   false,
+	}, token)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("create code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var window model.MaintenanceWindow
+	if err := json.Unmarshal(resp.Body.Bytes(), &window); err != nil {
+		t.Fatalf("decode window: %v", err)
+	}
+	if window.Active {
+		t.Fatal("response should preserve active=false")
+	}
+	var stored model.MaintenanceWindow
+	if err := db.First(&stored, window.ID).Error; err != nil {
+		t.Fatalf("load window: %v", err)
+	}
+	if stored.Active {
+		t.Fatal("stored window should preserve active=false")
 	}
 }

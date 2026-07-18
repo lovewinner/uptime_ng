@@ -109,10 +109,18 @@ func TestDeleteMonitorDataRemovesOwnedDependentsAndUngroupsChildren(t *testing.T
 	if err := db.Create(&child).Error; err != nil {
 		t.Fatalf("create child: %v", err)
 	}
+	sibling := model.Monitor{UserID: 1, Name: "sibling", Type: model.MonitorTypeHTTP}
+	if err := db.Create(&sibling).Error; err != nil {
+		t.Fatalf("create sibling: %v", err)
+	}
 	tag := model.Tag{Name: "prod", Color: "#123456"}
+	orphanTag := model.Tag{Name: "orphan", Color: "#654321"}
 	notif := model.Notification{UserID: 1, Name: "ops", Type: model.NotificationTypeEmail, Config: `{}`, Active: true}
 	if err := db.Create(&tag).Error; err != nil {
 		t.Fatalf("create tag: %v", err)
+	}
+	if err := db.Create(&orphanTag).Error; err != nil {
+		t.Fatalf("create orphan tag: %v", err)
 	}
 	if err := db.Create(&notif).Error; err != nil {
 		t.Fatalf("create notification: %v", err)
@@ -122,6 +130,8 @@ func TestDeleteMonitorDataRemovesOwnedDependentsAndUngroupsChildren(t *testing.T
 		&model.Heartbeat{MonitorID: parent.ID, Time: now},
 		&model.MonitorNotification{MonitorID: parent.ID, NotificationID: notif.ID},
 		&model.MonitorTag{MonitorID: parent.ID, TagID: tag.ID, Value: tag.Name},
+		&model.MonitorTag{MonitorID: sibling.ID, TagID: tag.ID, Value: tag.Name},
+		&model.MonitorTag{MonitorID: parent.ID, TagID: orphanTag.ID, Value: orphanTag.Name},
 		&model.MaintenanceWindow{UserID: 1, MonitorID: &parent.ID, Name: "window", StartAt: now, EndAt: now.Add(time.Hour)},
 		&model.StatMinutely{MonitorID: parent.ID, Timestamp: now.Unix()},
 		&model.StatHourly{MonitorID: parent.ID, Timestamp: now.Unix()},
@@ -160,6 +170,14 @@ func TestDeleteMonitorDataRemovesOwnedDependentsAndUngroupsChildren(t *testing.T
 	}
 	if updatedChild.GroupID != nil {
 		t.Fatalf("child group_id=%v want nil", *updatedChild.GroupID)
+	}
+	db.Model(&model.Tag{}).Where("id = ?", tag.ID).Count(&count)
+	if count != 1 {
+		t.Fatalf("shared tag count=%d want 1", count)
+	}
+	db.Model(&model.Tag{}).Where("id = ?", orphanTag.ID).Count(&count)
+	if count != 0 {
+		t.Fatalf("orphan tag count=%d want 0", count)
 	}
 }
 

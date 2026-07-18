@@ -110,6 +110,10 @@ func ungroupChildMonitors(tx *gorm.DB, groupID uint) error {
 
 func deleteMonitorData(tx *gorm.DB, monitor model.Monitor) error {
 	monitorID := monitor.ID
+	var tagIDs []uint
+	if err := tx.Model(&model.MonitorTag{}).Where("monitor_id = ?", monitorID).Pluck("tag_id", &tagIDs).Error; err != nil {
+		return err
+	}
 	for _, modelValue := range []any{
 		&model.Heartbeat{},
 		&model.MonitorNotification{},
@@ -127,7 +131,25 @@ func deleteMonitorData(tx *gorm.DB, monitor model.Monitor) error {
 	if err := ungroupChildMonitors(tx, monitorID); err != nil {
 		return err
 	}
-	return tx.Delete(&monitor).Error
+	if err := tx.Delete(&monitor).Error; err != nil {
+		return err
+	}
+	return deleteOrphanTags(tx, tagIDs)
+}
+
+func deleteOrphanTags(tx *gorm.DB, tagIDs []uint) error {
+	for _, tagID := range tagIDs {
+		var links int64
+		if err := tx.Model(&model.MonitorTag{}).Where("tag_id = ?", tagID).Count(&links).Error; err != nil {
+			return err
+		}
+		if links == 0 {
+			if err := tx.Delete(&model.Tag{}, tagID).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func findOrCreateTag(tx *gorm.DB, name string, color string) (model.Tag, error) {

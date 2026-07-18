@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"uptime_ng/internal/model"
 )
@@ -129,5 +133,36 @@ func TestBuildMaintenanceWindowReturnsMonitorLookupErrors(t *testing.T) {
 	}
 	if lookupErr == nil {
 		t.Fatal("expected lookup error")
+	}
+}
+
+func TestCreateMaintenanceWindowRollsBackInactiveCorrectionErrors(t *testing.T) {
+	db := testDB(t)
+	wantErr := errors.New("inactive correction failed")
+	db.Callback().Update().Before("gorm:update").Register("test_fail_maintenance_active_correction", func(tx *gorm.DB) {
+		if strings.Contains(tx.Statement.Table, "maintenance_windows") {
+			tx.AddError(wantErr)
+		}
+	})
+
+	start := time.Date(2026, 7, 19, 1, 0, 0, 0, time.UTC)
+	window := model.MaintenanceWindow{
+		UserID:  1,
+		Name:    "disabled",
+		StartAt: start,
+		EndAt:   start.Add(time.Hour),
+		Active:  false,
+	}
+
+	err := createMaintenanceWindow(db, &window)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error=%v want %v", err, wantErr)
+	}
+	var count int64
+	if err := db.Model(&model.MaintenanceWindow{}).Where("name = ?", "disabled").Count(&count).Error; err != nil {
+		t.Fatalf("count windows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("maintenance window count=%d want rollback to 0", count)
 	}
 }

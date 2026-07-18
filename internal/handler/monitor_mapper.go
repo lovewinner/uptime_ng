@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 
+	"gorm.io/gorm"
+
 	"uptime_ng/internal/model"
 )
 
@@ -30,6 +32,33 @@ func newMonitorFromRequest(userID uint, req CreateMonitorRequest) model.Monitor 
 	}
 	applyMonitorRequest(&monitor, req, true)
 	return monitor
+}
+
+func createMonitor(db *gorm.DB, monitor *model.Monitor) error {
+	active := monitor.Active
+	expiryNotification := monitor.ExpiryNotification
+	return runTransaction(db, func(tx *gorm.DB) error {
+		if err := tx.Create(monitor).Error; err != nil {
+			return err
+		}
+		return restoreMonitorDefaultedBooleans(tx, monitor, active, expiryNotification)
+	})
+}
+
+func restoreMonitorDefaultedBooleans(db *gorm.DB, monitor *model.Monitor, active bool, expiryNotification bool) error {
+	updates := map[string]any{}
+	if !active {
+		updates["active"] = false
+		monitor.Active = false
+	}
+	if !expiryNotification {
+		updates["expiry_notification"] = false
+		monitor.ExpiryNotification = false
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return db.Model(&model.Monitor{}).Where("id = ?", monitor.ID).Updates(updates).Error
 }
 
 func applyMonitorRequest(monitor *model.Monitor, req CreateMonitorRequest, overwriteAcceptedStatusCodes bool) {

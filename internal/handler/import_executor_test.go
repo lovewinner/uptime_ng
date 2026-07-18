@@ -183,6 +183,67 @@ func TestImportMonitorCreatesNewMonitorWithGroupPath(t *testing.T) {
 	}
 }
 
+func TestImportMonitorPreservesInactiveNewMonitor(t *testing.T) {
+	db := testDB(t)
+
+	var outcome importMonitorOutcome
+	if err := runTransaction(db, func(tx *gorm.DB) error {
+		var err error
+		outcome, err = importMonitor(tx, 1, ExportMonitor{
+			Name:                "paused",
+			Type:                model.MonitorTypeHTTP,
+			URL:                 "https://paused",
+			Active:              false,
+			AcceptedStatusCodes: []string{"200-299"},
+		}, "skip")
+		return err
+	}); err != nil {
+		t.Fatalf("importMonitor: %v", err)
+	}
+
+	if outcome.monitor.Active {
+		t.Fatal("outcome monitor should preserve active=false")
+	}
+	var stored model.Monitor
+	if err := db.First(&stored, outcome.monitor.ID).Error; err != nil {
+		t.Fatalf("load imported monitor: %v", err)
+	}
+	if stored.Active {
+		t.Fatal("stored monitor should preserve active=false")
+	}
+}
+
+func TestImportMonitorPreservesDisabledExpiryNotification(t *testing.T) {
+	db := testDB(t)
+
+	var outcome importMonitorOutcome
+	if err := runTransaction(db, func(tx *gorm.DB) error {
+		var err error
+		outcome, err = importMonitor(tx, 1, ExportMonitor{
+			Name:                "site",
+			Type:                model.MonitorTypeHTTP,
+			URL:                 "https://site",
+			Active:              true,
+			ExpiryNotification:  false,
+			AcceptedStatusCodes: []string{"200-299"},
+		}, "skip")
+		return err
+	}); err != nil {
+		t.Fatalf("importMonitor: %v", err)
+	}
+
+	if outcome.monitor.ExpiryNotification {
+		t.Fatal("outcome monitor should preserve expiry_notification=false")
+	}
+	var stored model.Monitor
+	if err := db.First(&stored, outcome.monitor.ID).Error; err != nil {
+		t.Fatalf("load imported monitor: %v", err)
+	}
+	if stored.ExpiryNotification {
+		t.Fatal("stored monitor should preserve expiry_notification=false")
+	}
+}
+
 func TestEnsureGroupPathReturnsLookupErrors(t *testing.T) {
 	db := testDB(t)
 	wantErr := errors.New("lookup failed")
@@ -196,35 +257,60 @@ func TestEnsureGroupPathReturnsLookupErrors(t *testing.T) {
 }
 
 func TestSyncImportedMonitorSchedulers(t *testing.T) {
+	db := testDB(t)
 	scheduler := &fakeScheduler{}
-	if err := syncImportedMonitorSchedulers(scheduler, []model.Monitor{
+	if err := syncImportedMonitorSchedulers(db, scheduler, []model.Monitor{
 		{ID: 1, Type: model.MonitorTypeGroup, Active: true},
 		{ID: 2, Type: model.MonitorTypeHTTP, Active: true},
 		{ID: 3, Type: model.MonitorTypeTCP, Active: false},
+		{ID: 4, Type: model.MonitorTypePush, Active: true},
 	}); err != nil {
 		t.Fatalf("sync schedulers: %v", err)
 	}
 
-	if len(scheduler.calls) != 3 {
-		t.Fatalf("calls=%+v", scheduler.calls)
-	}
 	want := []schedulerCall{
-		{action: "stop", id: 1},
+		{action: "restart", id: 1},
 		{action: "restart", id: 2},
 		{action: "stop", id: 3},
+		{action: "stop", id: 4},
 	}
-	for i := range want {
-		if scheduler.calls[i].action != want[i].action || scheduler.calls[i].id != want[i].id {
-			t.Fatalf("call[%d]=%+v want %+v", i, scheduler.calls[i], want[i])
-		}
-	}
+	assertSchedulerCalls(t, scheduler, want)
 }
 
 func TestSyncImportedMonitorSchedulersReturnsSchedulerErrors(t *testing.T) {
+	db := testDB(t)
 	wantErr := errors.New("restart failed")
 	scheduler := &fakeScheduler{restartErr: wantErr}
-	err := syncImportedMonitorSchedulers(scheduler, []model.Monitor{{ID: 2, Type: model.MonitorTypeHTTP, Active: true}})
+	err := syncImportedMonitorSchedulers(db, scheduler, []model.Monitor{{ID: 2, Type: model.MonitorTypeHTTP, Active: true}})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("error=%v want %v", err, wantErr)
 	}
+}
+
+func TestSyncImportedMonitorSchedulersDeactivatesFailedRestart(t *testing.T) {
+	db := testDB(t)
+	monitor := model.Monitor{UserID: 1, Name: "site", Type: model.MonitorTypeHTTP, Active: true}
+	if err := db.Create(&monitor).Error; err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	wantErr := errors.New("restart failed")
+	scheduler := &fakeScheduler{restartErr: wantErr}
+	err := syncImportedMonitorSchedulers(db, scheduler, []model.Monitor{monitor})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error=%v want %v", err, wantErr)
+	}
+
+	var stored model.Monitor
+	if err := db.First(&stored, monitor.ID).Error; err != nil {
+		t.Fatalf("load monitor: %v", err)
+	}
+	if stored.Active {
+		t.Fatal("monitor should be deactivated after imported scheduler restart failure")
+	}
+	wantCalls := []schedulerCall{
+		{action: "restart", id: monitor.ID},
+		{action: "stop", id: monitor.ID},
+	}
+	assertSchedulerCalls(t, scheduler, wantCalls)
 }

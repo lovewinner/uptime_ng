@@ -89,7 +89,7 @@ func importMonitor(tx *gorm.DB, userID uint, exported ExportMonitor, strategy st
 	}
 
 	monitor := newMonitorFromExport(userID, exported, groupID)
-	if err := tx.Create(&monitor).Error; err != nil {
+	if err := createMonitor(tx, &monitor); err != nil {
 		return importMonitorOutcome{}, err
 	}
 	if err := attachExportMonitorAssociations(tx, userID, monitor.ID, exported); err != nil {
@@ -98,20 +98,19 @@ func importMonitor(tx *gorm.DB, userID uint, exported ExportMonitor, strategy st
 	return importMonitorOutcome{action: importMonitorCreated, monitor: monitor}, nil
 }
 
-func syncImportedMonitorSchedulers(scheduler MonitorScheduler, monitors []model.Monitor) error {
+func syncImportedMonitorSchedulers(db *gorm.DB, scheduler MonitorScheduler, monitors []model.Monitor) error {
 	if scheduler == nil {
 		return nil
 	}
 	var errs []error
 	for i := range monitors {
-		if monitors[i].Type == model.MonitorTypeGroup {
-			scheduler.StopMonitor(monitors[i].ID)
-		} else if monitors[i].Active {
-			if err := scheduler.RestartMonitor(&monitors[i]); err != nil {
-				errs = append(errs, err)
-			}
+		monitor := monitors[i]
+		if !shouldRunScheduledMonitor(monitor) {
+			scheduler.StopMonitor(monitor.ID)
 		} else {
-			scheduler.StopMonitor(monitors[i].ID)
+			if err := scheduler.RestartMonitor(&monitor); err != nil {
+				errs = append(errs, deactivateMonitorAfterSchedulerFailure(db, scheduler, &monitor, err))
+			}
 		}
 	}
 	return errors.Join(errs...)
