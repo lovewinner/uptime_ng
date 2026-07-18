@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -120,7 +121,7 @@ type ImportResult struct {
 }
 
 func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 	username, _ := c.Get("username")
 
 	idsParam := c.Query("ids")
@@ -130,10 +131,16 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 		var ids []int
 		_ = json.Unmarshal([]byte(idsParam), &ids)
 		if len(ids) > 0 {
-			h.DB.Where("user_id = ? AND id IN ?", userID, ids).Find(&monitors)
+			if err := h.DB.Where("user_id = ? AND id IN ?", userID, ids).Find(&monitors).Error; err != nil {
+				errorResponse(c, http.StatusInternalServerError, "export_query_failed", err.Error())
+				return
+			}
 		}
 	} else {
-		h.DB.Where("user_id = ?", userID).Find(&monitors)
+		if err := h.DB.Where("user_id = ?", userID).Find(&monitors).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "export_query_failed", err.Error())
+			return
+		}
 	}
 
 	exportMonitors := make([]ExportMonitor, len(monitors))
@@ -142,24 +149,36 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 
 	for i, m := range monitors {
 		var tags []model.Tag
-		h.DB.Raw(`
+		if err := h.DB.Raw(`
 			SELECT t.* FROM tags t
 			JOIN monitor_tags mt ON mt.tag_id = t.id
 			WHERE mt.monitor_id = ?
-		`, m.ID).Scan(&tags)
-
-		var notifs []model.MonitorNotification
-		h.DB.Where("monitor_id = ?", m.ID).Find(&notifs)
-		notifNames := make([]string, len(notifs))
-		for j, mn := range notifs {
-			var n model.Notification
-			if err := h.DB.Where("id = ?", mn.NotificationID).First(&n).Error; err == nil {
-				notifNames[j] = n.Name
-				notifNameSet[n.Name] = &n
-			}
+		`, m.ID).Scan(&tags).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "export_tags_failed", err.Error())
+			return
 		}
 
-		exportMonitors[i] = exportMonitorFromModel(m, tags, notifNames, h.groupPath(userID.(uint), m.GroupID))
+		var notifs []model.MonitorNotification
+		if err := h.DB.Where("monitor_id = ?", m.ID).Find(&notifs).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "export_notifications_failed", err.Error())
+			return
+		}
+		notifNames := make([]string, 0, len(notifs))
+		for _, mn := range notifs {
+			var n model.Notification
+			err := h.DB.Where("id = ?", mn.NotificationID).First(&n).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if err != nil {
+				errorResponse(c, http.StatusInternalServerError, "export_notification_failed", err.Error())
+				return
+			}
+			notifNames = append(notifNames, n.Name)
+			notifNameSet[n.Name] = &n
+		}
+
+		exportMonitors[i] = exportMonitorFromModel(m, tags, notifNames, userGroupPath(h.DB, userID, m.GroupID))
 	}
 
 	exportNotifs := make([]ExportNotification, 0, len(notifNameSet))
@@ -184,7 +203,7 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 }
 
 func (h *ImportExportHandler) ImportPreview(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 
 	var req ImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -194,7 +213,10 @@ func (h *ImportExportHandler) ImportPreview(c *gin.Context) {
 
 	existingByName := map[string]model.Monitor{}
 	var existing []model.Monitor
-	h.DB.Where("user_id = ?", userID).Find(&existing)
+	if err := h.DB.Where("user_id = ?", userID).Find(&existing).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "import_preview_query_failed", err.Error())
+		return
+	}
 	for _, monitor := range existing {
 		existingByName[monitor.Name] = monitor
 	}
@@ -203,7 +225,7 @@ func (h *ImportExportHandler) ImportPreview(c *gin.Context) {
 }
 
 func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 
 	var req ImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -212,68 +234,39 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 	}
 
 	result := ImportResult{}
-	tx := h.DB.Begin()
 	importedMonitors := make([]model.Monitor, 0, len(req.Data.Monitors))
 
-	importNotifications(tx, userID.(uint), req.Data.Notifications, req.Strategy)
-
-	for _, em := range req.Data.Monitors {
-		groupID, err := ensureGroupPath(tx, userID.(uint), em.GroupPath)
-		if err != nil {
-			result.Errors = append(result.Errors, "failed to prepare group for "+em.Name+": "+err.Error())
-			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, result)
-			return
+	if err := runTransaction(h.DB, func(tx *gorm.DB) error {
+		if err := importNotifications(tx, userID, req.Data.Notifications, req.Strategy); err != nil {
+			result.Errors = append(result.Errors, "failed to import notifications: "+err.Error())
+			return err
 		}
-		var existing model.Monitor
-		err = tx.Where("user_id = ? AND name = ?", userID, em.Name).First(&existing).Error
 
-		if err == nil {
-			switch req.Strategy {
-			case "skip":
-				result.Skipped++
-				continue
-			case "overwrite":
-				existing = applyExportMonitor(existing, em)
-				existing.GroupID = groupID
-				if err := tx.Save(&existing).Error; err != nil {
-					result.Errors = append(result.Errors, "failed to update "+em.Name+": "+err.Error())
-					tx.Rollback()
-					c.JSON(http.StatusInternalServerError, result)
-					return
-				}
-				refreshTagsAndNotifs(tx, &existing, em)
-				importedMonitors = append(importedMonitors, existing)
-				result.Updated++
-			case "copy":
-				em.Name = em.Name + " (copy)"
-				fallthrough
-			default:
+		for _, em := range req.Data.Monitors {
+			outcome, err := importMonitor(tx, userID, em, req.Strategy)
+			if err != nil {
+				result.Errors = append(result.Errors, "failed to import "+em.Name+": "+err.Error())
+				return err
+			}
+			switch outcome.action {
+			case importMonitorCreated:
 				result.Created++
-				monitor := newMonitorFromExport(userID.(uint), em, groupID)
-				if err := tx.Create(&monitor).Error; err != nil {
-					result.Errors = append(result.Errors, "failed to create "+em.Name+": "+err.Error())
-					tx.Rollback()
-					c.JSON(http.StatusInternalServerError, result)
-					return
-				}
-				attachTagsAndNotifs(tx, &monitor, em)
-				importedMonitors = append(importedMonitors, monitor)
+				importedMonitors = append(importedMonitors, outcome.monitor)
+			case importMonitorUpdated:
+				result.Updated++
+				importedMonitors = append(importedMonitors, outcome.monitor)
+			case importMonitorSkipped:
+				result.Skipped++
 			}
-		} else {
-			result.Created++
-			monitor := newMonitorFromExport(userID.(uint), em, groupID)
-			if err := tx.Create(&monitor).Error; err != nil {
-				result.Errors = append(result.Errors, "failed to create "+em.Name+": "+err.Error())
-				continue
-			}
-			attachTagsAndNotifs(tx, &monitor, em)
-			importedMonitors = append(importedMonitors, monitor)
 		}
-	}
 
-	if err := tx.Commit().Error; err != nil {
-		errorResponse(c, http.StatusInternalServerError, "import_commit_failed", err.Error())
+		return nil
+	}); err != nil {
+		if len(result.Errors) > 0 {
+			c.JSON(http.StatusInternalServerError, result)
+		} else {
+			errorResponse(c, http.StatusInternalServerError, "import_commit_failed", err.Error())
+		}
 		return
 	}
 	syncImportedMonitorSchedulers(h.Scheduler, importedMonitors)
@@ -335,31 +328,6 @@ func applyExportMonitor(existing model.Monitor, em ExportMonitor) model.Monitor 
 	return existing
 }
 
-func (h *ImportExportHandler) groupPath(userID uint, groupID *uint) []string {
-	if groupID == nil {
-		return nil
-	}
-	path := []string{}
-	seen := map[uint]bool{}
-	current := *groupID
-	for current != 0 {
-		if seen[current] {
-			break
-		}
-		seen[current] = true
-		var group model.Monitor
-		if err := h.DB.Select("id", "name", "group_id").Where("id = ? AND user_id = ? AND type = ?", current, userID, model.MonitorTypeGroup).First(&group).Error; err != nil {
-			break
-		}
-		path = append([]string{group.Name}, path...)
-		if group.GroupID == nil {
-			break
-		}
-		current = *group.GroupID
-	}
-	return path
-}
-
 func ensureGroupPath(tx *gorm.DB, userID uint, path []string) (*uint, error) {
 	var parentID *uint
 	for _, rawName := range path {
@@ -374,10 +342,14 @@ func ensureGroupPath(tx *gorm.DB, userID uint, path []string) (*uint, error) {
 		} else {
 			query = query.Where("group_id = ?", *parentID)
 		}
-		if err := query.First(&group).Error; err == nil {
+		err := query.First(&group).Error
+		if err == nil {
 			id := group.ID
 			parentID = &id
 			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
 		group = model.Monitor{
 			UserID:              userID,
@@ -399,30 +371,6 @@ func ensureGroupPath(tx *gorm.DB, userID uint, path []string) (*uint, error) {
 		parentID = &id
 	}
 	return parentID, nil
-}
-
-func attachTagsAndNotifs(tx *gorm.DB, monitor *model.Monitor, em ExportMonitor) {
-	for _, et := range em.Tags {
-		if et.Name == "" {
-			continue
-		}
-		tag := findOrCreateTag(tx, et.Name, tagColor(et.Color))
-		tx.Create(&model.MonitorTag{MonitorID: monitor.ID, TagID: tag.ID, Value: et.Name})
-	}
-
-	for _, nn := range em.NotificationNames {
-		var notif model.Notification
-		if err := tx.Where("name = ?", nn).First(&notif).Error; err == nil {
-			mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: notif.ID}
-			tx.Create(&mn)
-		}
-	}
-}
-
-func refreshTagsAndNotifs(tx *gorm.DB, monitor *model.Monitor, em ExportMonitor) {
-	tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorTag{})
-	tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorNotification{})
-	attachTagsAndNotifs(tx, monitor, em)
 }
 
 func addTagIfNew(preview *ImportPreviewResponse, et ExportTag) {

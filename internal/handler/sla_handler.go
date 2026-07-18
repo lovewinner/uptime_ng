@@ -47,15 +47,19 @@ type uptimeDataPoint struct {
 }
 
 func (h *SLAHandler) GetUptime(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
 	var req SLARequest
 	req.PeriodType = c.DefaultQuery("period", "day")
 	periodStart, periodEnd := periodRange(req.PeriodType, time.Now())
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	monitor, err := userMonitor(h.DB, userID, monitorID)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
@@ -78,7 +82,7 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 }
 
 func (h *SLAHandler) GetOverall(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 	periodType := c.DefaultQuery("period", "day")
 	periodStart, periodEnd := periodRange(periodType, time.Now())
 
@@ -104,7 +108,7 @@ func (h *SLAHandler) GetOverall(c *gin.Context) {
 
 	if data, err := json.Marshal(results); err == nil {
 		h.DB.Create(&model.SLAReport{
-			UserID:      userID.(uint),
+			UserID:      userID,
 			PeriodType:  periodType,
 			PeriodStart: periodStart,
 			PeriodEnd:   periodEnd,
@@ -117,13 +121,16 @@ func (h *SLAHandler) GetOverall(c *gin.Context) {
 }
 
 func (h *SLAHandler) GetUptimeData(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 	granularity := c.DefaultQuery("granularity", "daily")
 	num := positiveIntParam(c.DefaultQuery("num", "30"), 30)
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
@@ -150,11 +157,15 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 }
 
 func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	monitor, err := userMonitor(h.DB, userID, monitorID)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}

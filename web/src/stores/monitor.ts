@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import api from '@/api/http'
+import { arrayFromResponse } from '@/api/responses'
 import { wsClient } from '@/api/ws'
 import type {
   Heartbeat,
-  MonitorListItem,
   MonitorPayload,
   MonitorStatus,
   Notification,
@@ -13,6 +13,7 @@ import {
   buildMonitorTree as buildMonitorTreeFromItems,
   groupLabel as groupLabelFromItems,
   groupOptions as groupOptionsFromItems,
+  monitorsFromResponses,
   parseCodes,
   statusColor,
   statusText,
@@ -43,7 +44,7 @@ export const useMonitorStore = defineStore('monitor', () => {
   async function fetchStatus() {
     try {
       const res = await api.get('/monitors/status')
-      statusList.splice(0, statusList.length, ...res.data)
+      statusList.splice(0, statusList.length, ...arrayFromResponse<MonitorStatus>(res.data))
     } catch {
       // ignore
     }
@@ -68,13 +69,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     loading.value = true
     try {
       const res = await api.get('/monitors')
-      const data = res.data as MonitorListItem[]
-      monitors.value = data.map((item) => ({
-        ...item.monitor,
-        tags: item.tags || [],
-        notification_ids: item.notification_ids || [],
-        accepted_status_codes: parseCodes(item.monitor.accepted_status_codes),
-      }))
+      monitors.value = monitorsFromResponses(res.data)
     } finally {
       loading.value = false
     }
@@ -83,7 +78,7 @@ export const useMonitorStore = defineStore('monitor', () => {
   async function fetchNotifications() {
     try {
       const res = await api.get('/notifications')
-      notifications.value = res.data
+      notifications.value = arrayFromResponse<Notification>(res.data)
     } catch {
       // ignore
     }

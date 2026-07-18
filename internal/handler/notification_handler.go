@@ -25,7 +25,7 @@ type CreateNotificationRequest struct {
 }
 
 func (h *NotificationHandler) Create(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 
 	var req CreateNotificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -33,7 +33,7 @@ func (h *NotificationHandler) Create(c *gin.Context) {
 		return
 	}
 
-	notif, validationErr := notificationFromRequest(req, userID.(uint))
+	notif, validationErr := notificationFromRequest(req, userID)
 	if validationErr != nil {
 		badRequest(c, validationErr.code, validationErr.message)
 		return
@@ -48,7 +48,7 @@ func (h *NotificationHandler) Create(c *gin.Context) {
 }
 
 func (h *NotificationHandler) List(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 
 	var notifs []model.Notification
 	h.DB.Where("user_id = ?", userID).Order("created_at DESC").Find(&notifs)
@@ -57,11 +57,15 @@ func (h *NotificationHandler) List(c *gin.Context) {
 }
 
 func (h *NotificationHandler) Get(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	id := c.Param("id")
+	userID := c.GetUint("user_id")
+	id, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_notification_id", "invalid notification id")
+		return
+	}
 
-	var notif model.Notification
-	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&notif).Error; err != nil {
+	notif, err := userNotification(h.DB, userID, id)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
 		return
 	}
@@ -70,11 +74,15 @@ func (h *NotificationHandler) Get(c *gin.Context) {
 }
 
 func (h *NotificationHandler) Update(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	id := c.Param("id")
+	userID := c.GetUint("user_id")
+	id, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_notification_id", "invalid notification id")
+		return
+	}
 
-	var notif model.Notification
-	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&notif).Error; err != nil {
+	notif, err := userNotification(h.DB, userID, id)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
 		return
 	}
@@ -98,25 +106,41 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 }
 
 func (h *NotificationHandler) Delete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	id := c.Param("id")
+	userID := c.GetUint("user_id")
+	id, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_notification_id", "invalid notification id")
+		return
+	}
 
-	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).Delete(&model.Notification{}).Error; err != nil {
+	notif, err := userNotification(h.DB, userID, id)
+	if err != nil {
+		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
+		return
+	}
+	if err := h.DB.Delete(&notif).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "notification_delete_failed", err.Error())
 		return
 	}
 
-	h.DB.Where("notification_id = ?", id).Delete(&model.MonitorNotification{})
+	if err := h.DB.Where("notification_id = ?", id).Delete(&model.MonitorNotification{}).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "notification_association_delete_failed", err.Error())
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "notification deleted"})
 }
 
 func (h *NotificationHandler) Test(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	id := c.Param("id")
+	userID := c.GetUint("user_id")
+	id, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_notification_id", "invalid notification id")
+		return
+	}
 
-	var notif model.Notification
-	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&notif).Error; err != nil {
+	notif, err := userNotification(h.DB, userID, id)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
 		return
 	}

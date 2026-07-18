@@ -1,4 +1,5 @@
-import type { Monitor as ApiMonitor } from '@/api/types'
+import type { Monitor as ApiMonitor, MonitorResponse } from '@/api/types'
+import { arrayFromResponse } from '@/api/responses'
 
 export type Monitor = Omit<ApiMonitor, 'accepted_status_codes'> & { accepted_status_codes: string[] }
 export type MonitorTreeNode = Monitor & { children?: MonitorTreeNode[] }
@@ -11,6 +12,19 @@ export function parseCodes(raw: string): string[] {
   } catch {
     return ['200-299']
   }
+}
+
+export function monitorFromResponse(item: MonitorResponse): Monitor {
+  return {
+    ...item.monitor,
+    tags: item.tags || [],
+    notification_ids: item.notification_ids || [],
+    accepted_status_codes: parseCodes(item.monitor.accepted_status_codes),
+  }
+}
+
+export function monitorsFromResponses(items: MonitorResponse[] | null | undefined): Monitor[] {
+  return arrayFromResponse(items).map(monitorFromResponse)
 }
 
 export function buildMonitorTree(items: Monitor[]): MonitorTreeNode[] {

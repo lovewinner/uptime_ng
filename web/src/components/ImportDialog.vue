@@ -11,6 +11,10 @@ import {
   hasNewTags,
   hasNotifications,
   initialImportStep,
+  importExecuteRequest,
+  importPreviewFromResponse,
+  importPreviewRequest,
+  importResultFromResponse,
   maskedNotificationsWarning,
   parseImportJSON,
   type ImportPreview,
@@ -52,8 +56,8 @@ function handleFileChange() {
       const data = parseImportJSON(e.target?.result as string)
       step.value = 'preview'
       loading.value = true
-      const res = await api.post('/monitors/import/preview', { data, strategy: 'skip' })
-      previewData.value = res.data
+      const res = await api.post('/monitors/import/preview', importPreviewRequest(data))
+      previewData.value = importPreviewFromResponse(res.data)
     } catch (err: unknown) {
       error.value = apiErrorMessage(err, '无效的JSON文件')
     } finally {
@@ -70,8 +74,8 @@ async function executeImport() {
     if (!file) return
     const text = await file.text()
     const data = parseImportJSON(text)
-    const res = await api.post('/monitors/import', { data, strategy: strategy.value })
-    importResult.value = res.data
+    const res = await api.post('/monitors/import', importExecuteRequest(data, strategy.value))
+    importResult.value = importResultFromResponse(res.data)
     step.value = 'result'
     emit('imported')
   } catch (err: unknown) {

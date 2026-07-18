@@ -2,7 +2,9 @@
 import { onMounted, ref, computed, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '@/api/http'
+import { arrayFromResponse, objectFromResponse } from '@/api/responses'
 import { useMonitorStore } from '@/stores/monitor'
+import { monitorFromResponse } from '@/stores/monitorHelpers'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -66,7 +68,8 @@ const incidentList = ref<Incident[]>([])
 const pingChartData = ref<UptimeDataPoint[]>([])
 const uptimeChartData = ref<UptimeDataPoint[]>([])
 const loading = ref(false)
-const uptimeSummary = ref<UptimeSummary>({ uptime_24h: 0, uptime_30d: 0, uptime_1y: 0 })
+const defaultUptimeSummary = (): UptimeSummary => ({ uptime_24h: 0, uptime_30d: 0, uptime_1y: 0 })
+const uptimeSummary = ref<UptimeSummary>(defaultUptimeSummary())
 
 const beatsContainer = ref<{ $el?: HTMLElement } | null>(null)
 const containerWidth = ref(0)
@@ -77,7 +80,7 @@ const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
 async function loadBeats() {
   const id = monitorId.value
   const res = await api.get(`/monitors/${id}/beats`, { params: { period: 86400 } })
-  allBeats.value = res.data || []
+  allBeats.value = arrayFromResponse<Heartbeat>(res.data)
 }
 const pingChartOption = computed(() => buildPingChartOption(pingChartData.value))
 const uptimeChartOption = computed(() => buildUptimeChartOption(uptimeChartData.value))
@@ -90,7 +93,7 @@ onMounted(async () => {
     const id = monitorId.value
 
     const res = await api.get(`/monitors/${id}`)
-    monitor.value = res.data.monitor
+    monitor.value = monitorFromResponse(res.data)
 
     if (monitor.value?.type === 'group') {
       return
@@ -103,9 +106,9 @@ onMounted(async () => {
       api.get(`/monitors/${id}/uptime/summary`),
     ])
 
-    pingChartData.value = pingRes.data || []
-    uptimeChartData.value = uptimeRes.data || []
-    uptimeSummary.value = summaryRes.data || {}
+    pingChartData.value = arrayFromResponse<UptimeDataPoint>(pingRes.data)
+    uptimeChartData.value = arrayFromResponse<UptimeDataPoint>(uptimeRes.data)
+    uptimeSummary.value = objectFromResponse<UptimeSummary>(summaryRes.data, defaultUptimeSummary())
     await loadBeats()
     unsubscribeWS = wsClient.onMessage((msg) => {
       if (msg.type !== 'heartbeat') return
@@ -117,7 +120,7 @@ onMounted(async () => {
     if (interval && interval > 0) {
       refreshTimer = setInterval(() => loadBeats(), interval * 1000)
     }
-    incidentList.value = incidentsRes.data || []
+    incidentList.value = arrayFromResponse<Incident>(incidentsRes.data)
   } catch {
     // 错误处理
   } finally {

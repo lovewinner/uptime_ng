@@ -111,7 +111,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 }
 
 func (h *AuthHandler) Profile(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 
 	var user model.User
 	if err := h.DB.First(&user, userID).Error; err != nil {
@@ -136,7 +136,11 @@ type UpdateUserRequest struct {
 }
 
 func (h *AuthHandler) UpdateUser(c *gin.Context) {
-	userID := c.Param("id")
+	userID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_user_id", "invalid user id")
+		return
+	}
 	currentUserID := c.GetUint("user_id")
 
 	var target model.User

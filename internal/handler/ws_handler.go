@@ -105,8 +105,8 @@ func formatWSMessage(msg WSMessage) []byte {
 }
 
 func (h *WSHub) HandleWebSocket(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
+	userID := c.GetUint("user_id")
+	if userID == 0 {
 		return
 	}
 
@@ -117,7 +117,7 @@ func (h *WSHub) HandleWebSocket(c *gin.Context) {
 	}
 
 	client := &Client{
-		UserID: userID.(uint),
+		UserID: userID,
 		Conn:   conn,
 		Send:   make(chan []byte, 256),
 	}

@@ -4,6 +4,13 @@ export interface Tag {
   color: string
 }
 
+export interface AuthResponse {
+  token: string
+  user_id: number
+  username: string
+  role: string
+}
+
 export interface Monitor {
   id: number
   user_id: number
@@ -56,11 +63,13 @@ export interface Monitor {
   notification_ids?: number[]
 }
 
-export interface MonitorListItem {
+export interface MonitorResponse {
   monitor: Omit<Monitor, 'accepted_status_codes'> & { accepted_status_codes: string }
   tags: Tag[]
   notification_ids: number[]
 }
+
+export type MonitorListItem = MonitorResponse
 
 export interface MonitorPayload {
   name: string
@@ -171,6 +180,13 @@ export interface Notification {
   name: string
   type: 'feishu' | 'email'
   config: string
+  active: boolean
+}
+
+export interface User {
+  id: number
+  username: string
+  role: string
   active: boolean
 }
 

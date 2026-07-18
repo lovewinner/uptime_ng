@@ -2,6 +2,7 @@
 import { onMounted, ref, reactive, computed } from 'vue'
 import api from '@/api/http'
 import { apiErrorMessage } from '@/api/errors'
+import { arrayFromResponse } from '@/api/responses'
 import { ElMessageBox } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import type { Notification } from '@/api/types'
@@ -41,7 +42,7 @@ async function fetchNotifications() {
   loading.value = true
   try {
     const res = await api.get('/notifications')
-    notifications.value = res.data
+    notifications.value = arrayFromResponse<Notification>(res.data)
   } catch {
     // ignore
   } finally {

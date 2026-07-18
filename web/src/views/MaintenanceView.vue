@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { apiErrorMessage } from '@/api/errors'
+import { arrayFromResponse } from '@/api/responses'
 import { useMonitorStore } from '@/stores/monitor'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { MaintenanceWindow } from '@/api/types'
@@ -32,7 +33,7 @@ async function fetchWindows() {
   loading.value = true
   try {
     const res = await api.get('/maintenance')
-    windows.value = res.data || []
+    windows.value = arrayFromResponse<MaintenanceWindow>(res.data)
   } finally {
     loading.value = false
   }

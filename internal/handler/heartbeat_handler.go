@@ -20,12 +20,15 @@ func NewHeartbeatHandler(db *gorm.DB) *HeartbeatHandler {
 }
 
 func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 	period := positiveIntParam(c.DefaultQuery("period", "3600"), 3600)
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
@@ -41,12 +44,15 @@ func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
 }
 
 func (h *HeartbeatHandler) GetImportantBeats(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 	limit := positiveIntParam(c.DefaultQuery("limit", "50"), 50)
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
@@ -61,11 +67,14 @@ func (h *HeartbeatHandler) GetImportantBeats(c *gin.Context) {
 }
 
 func (h *HeartbeatHandler) GetIncidents(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
@@ -100,8 +109,8 @@ func (h *HeartbeatHandler) GetRecentStatus(c *gin.Context) {
 
 func (h *HeartbeatHandler) GetStatus(c *gin.Context) {
 	userID := c.GetUint("user_id")
-	monitorID := uint(positiveIntParam(c.Param("id"), 0))
-	if monitorID == 0 {
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
 		badRequest(c, "invalid_monitor_id", "invalid monitor id")
 		return
 	}

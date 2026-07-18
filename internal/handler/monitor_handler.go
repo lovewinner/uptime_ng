@@ -80,7 +80,7 @@ type CreateMonitorRequest struct {
 }
 
 func (h *MonitorHandler) Create(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 
 	var req CreateMonitorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -88,25 +88,20 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 	normalizeMonitorRequest(&req)
-	if err := h.validateMonitorRequest(userID.(uint), 0, req); err != nil {
+	if err := h.validateMonitorRequest(userID, 0, req); err != nil {
 		badRequest(c, err.code, err.message)
 		return
 	}
 
-	monitor := newMonitorFromRequest(userID.(uint), req)
+	monitor := newMonitorFromRequest(userID, req)
 
-	tx := h.DB.Begin()
-
-	if err := tx.Create(&monitor).Error; err != nil {
-		tx.Rollback()
+	if err := runTransaction(h.DB, func(tx *gorm.DB) error {
+		if err := tx.Create(&monitor).Error; err != nil {
+			return err
+		}
+		return attachMonitorAssociations(tx, monitor.ID, req.NotificationIDs, req.TagNames, req.TagColors)
+	}); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_create_failed", err.Error())
-		return
-	}
-
-	attachMonitorAssociations(tx, monitor.ID, req.NotificationIDs, req.TagNames, req.TagColors)
-
-	if err := tx.Commit().Error; err != nil {
-		errorResponse(c, http.StatusInternalServerError, "monitor_create_commit_failed", err.Error())
 		return
 	}
 
@@ -118,7 +113,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 }
 
 func (h *MonitorHandler) List(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID := c.GetUint("user_id")
 
 	var monitors []model.Monitor
 	h.DB.Where("user_id = ?", userID).Order("created_at DESC").Find(&monitors)
@@ -133,11 +128,15 @@ func (h *MonitorHandler) List(c *gin.Context) {
 }
 
 func (h *MonitorHandler) Get(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	monitor, err := userMonitor(h.DB, userID, monitorID)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
@@ -146,11 +145,15 @@ func (h *MonitorHandler) Get(c *gin.Context) {
 }
 
 func (h *MonitorHandler) Update(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	monitor, err := userMonitor(h.DB, userID, monitorID)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
@@ -161,7 +164,7 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 		return
 	}
 	normalizeMonitorRequest(&req)
-	if err := h.validateMonitorRequest(userID.(uint), monitor.ID, req); err != nil {
+	if err := h.validateMonitorRequest(userID, monitor.ID, req); err != nil {
 		badRequest(c, err.code, err.message)
 		return
 	}
@@ -169,20 +172,18 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	wasGroup := monitor.Type == model.MonitorTypeGroup
 	applyMonitorRequest(&monitor, req, false)
 
-	tx := h.DB.Begin()
-	if wasGroup && monitor.Type != model.MonitorTypeGroup {
-		tx.Model(&model.Monitor{}).Where("group_id = ?", monitor.ID).Update("group_id", nil)
-	}
-	if err := tx.Save(&monitor).Error; err != nil {
-		tx.Rollback()
+	if err := runTransaction(h.DB, func(tx *gorm.DB) error {
+		if wasGroup && monitor.Type != model.MonitorTypeGroup {
+			if err := ungroupChildMonitors(tx, monitor.ID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Save(&monitor).Error; err != nil {
+			return err
+		}
+		return refreshMonitorAssociations(tx, monitor.ID, req.NotificationIDs, req.TagNames, req.TagColors, req.NotificationIDs != nil, req.TagNames != nil)
+	}); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_update_failed", err.Error())
-		return
-	}
-
-	refreshMonitorAssociations(tx, monitor.ID, req.NotificationIDs, req.TagNames, req.TagColors, req.NotificationIDs != nil, req.TagNames != nil)
-
-	if err := tx.Commit().Error; err != nil {
-		errorResponse(c, http.StatusInternalServerError, "monitor_update_commit_failed", err.Error())
 		return
 	}
 
@@ -198,27 +199,22 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 }
 
 func (h *MonitorHandler) Delete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	monitor, err := userMonitor(h.DB, userID, monitorID)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
 
-	tx := h.DB.Begin()
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.Heartbeat{})
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.MonitorNotification{})
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.MonitorTag{})
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.MaintenanceWindow{})
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatMinutely{})
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatHourly{})
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatDaily{})
-	tx.Where("monitor_id = ?", monitorID).Delete(&model.Incident{})
-	tx.Model(&model.Monitor{}).Where("group_id = ?", monitor.ID).Update("group_id", nil)
-	tx.Delete(&monitor)
-	if err := tx.Commit().Error; err != nil {
+	if err := runTransaction(h.DB, func(tx *gorm.DB) error {
+		return deleteMonitorData(tx, monitor)
+	}); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_delete_failed", err.Error())
 		return
 	}
@@ -231,15 +227,19 @@ func (h *MonitorHandler) Delete(c *gin.Context) {
 }
 
 func (h *MonitorHandler) Resume(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	monitor, err := userMonitor(h.DB, userID, monitorID)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
-	monitors := h.monitorActivationTargets(userID.(uint), monitor)
+	monitors := h.monitorActivationTargets(userID, monitor)
 	ids := monitorIDs(monitors)
 	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", true).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_resume_failed", err.Error())
@@ -250,15 +250,19 @@ func (h *MonitorHandler) Resume(c *gin.Context) {
 }
 
 func (h *MonitorHandler) Pause(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	monitorID := c.Param("id")
+	userID := c.GetUint("user_id")
+	monitorID, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_monitor_id", "invalid monitor id")
+		return
+	}
 
-	var monitor model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
+	monitor, err := userMonitor(h.DB, userID, monitorID)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
-	monitors := h.monitorActivationTargets(userID.(uint), monitor)
+	monitors := h.monitorActivationTargets(userID, monitor)
 	ids := monitorIDs(monitors)
 	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", false).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_pause_failed", err.Error())
@@ -279,11 +283,11 @@ func (h *MonitorHandler) validateMonitorRequest(userID uint, monitorID uint, req
 		return &requestValidationError{code: "invalid_group", message: "monitor cannot be its own group"}
 	}
 
-	var parent model.Monitor
-	if err := h.DB.Where("id = ? AND user_id = ? AND type = ?", *req.GroupID, userID, model.MonitorTypeGroup).First(&parent).Error; err != nil {
+	parent, err := userGroupMonitor(h.DB, userID, *req.GroupID)
+	if err != nil {
 		return &requestValidationError{code: "invalid_group", message: "group_id must reference a group monitor owned by the current user"}
 	}
-	if monitorID != 0 && h.wouldCreateGroupCycle(userID, monitorID, parent.ID) {
+	if monitorID != 0 && wouldCreateGroupCycle(h.DB, userID, monitorID, parent.ID) {
 		return &requestValidationError{code: "group_cycle", message: "group hierarchy cannot contain cycles"}
 	}
 	return nil
@@ -296,30 +300,6 @@ func isValidMonitorType(monitorType string) bool {
 	default:
 		return false
 	}
-}
-
-func (h *MonitorHandler) wouldCreateGroupCycle(userID uint, monitorID uint, parentID uint) bool {
-	seen := map[uint]bool{}
-	current := parentID
-	for current != 0 {
-		if current == monitorID {
-			return true
-		}
-		if seen[current] {
-			return true
-		}
-		seen[current] = true
-
-		var parent model.Monitor
-		if err := h.DB.Select("id", "group_id").Where("id = ? AND user_id = ?", current, userID).First(&parent).Error; err != nil {
-			return false
-		}
-		if parent.GroupID == nil {
-			return false
-		}
-		current = *parent.GroupID
-	}
-	return false
 }
 
 func (h *MonitorHandler) descendantMonitors(userID uint, groupID uint) []model.Monitor {

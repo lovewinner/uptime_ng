@@ -48,9 +48,13 @@ func (h *MaintenanceHandler) Create(c *gin.Context) {
 
 func (h *MaintenanceHandler) Update(c *gin.Context) {
 	userID := c.GetUint("user_id")
-	id := c.Param("id")
-	var existing model.MaintenanceWindow
-	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&existing).Error; err != nil {
+	id, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_maintenance_id", "invalid maintenance id")
+		return
+	}
+	existing, err := userMaintenanceWindow(h.DB, userID, id)
+	if err != nil {
 		errorResponse(c, http.StatusNotFound, "maintenance_not_found", "maintenance window not found")
 		return
 	}
@@ -67,8 +71,17 @@ func (h *MaintenanceHandler) Update(c *gin.Context) {
 
 func (h *MaintenanceHandler) Delete(c *gin.Context) {
 	userID := c.GetUint("user_id")
-	id := c.Param("id")
-	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).Delete(&model.MaintenanceWindow{}).Error; err != nil {
+	id, ok := uintParam(c.Param("id"))
+	if !ok {
+		badRequest(c, "invalid_maintenance_id", "invalid maintenance id")
+		return
+	}
+	window, err := userMaintenanceWindow(h.DB, userID, id)
+	if err != nil {
+		errorResponse(c, http.StatusNotFound, "maintenance_not_found", "maintenance window not found")
+		return
+	}
+	if err := h.DB.Delete(&window).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "maintenance_delete_failed", err.Error())
 		return
 	}
@@ -88,8 +101,7 @@ func (h *MaintenanceHandler) bindWindow(c *gin.Context, userID uint, existing *m
 		return model.MaintenanceWindow{}, false
 	}
 	if req.MonitorID != nil {
-		var monitor model.Monitor
-		if err := h.DB.Where("id = ? AND user_id = ?", *req.MonitorID, userID).First(&monitor).Error; err != nil {
+		if _, err := userMonitor(h.DB, userID, *req.MonitorID); err != nil {
 			badRequest(c, "invalid_monitor", "monitor_id must reference a monitor owned by the current user")
 			return model.MaintenanceWindow{}, false
 		}

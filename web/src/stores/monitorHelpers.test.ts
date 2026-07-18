@@ -4,11 +4,14 @@ import {
   collectDescendants,
   groupLabel,
   groupOptions,
+  monitorFromResponse,
+  monitorsFromResponses,
   parseCodes,
   statusColor,
   statusText,
   type Monitor,
 } from './monitorHelpers'
+import type { MonitorResponse } from '@/api/types'
 
 function monitor(overrides: Partial<Monitor>): Monitor {
   return {
@@ -77,6 +80,48 @@ describe('monitor helpers', () => {
     expect(statusColor(0)).toBe('danger')
     expect(statusColor(2)).toBe('warning')
     expect(statusColor(9)).toBe('info')
+  })
+
+  it('normalizes monitor list API items', () => {
+    const item = {
+      monitor: {
+        ...monitor({
+          id: 12,
+          name: 'site',
+          accepted_status_codes: ['200-299', '301'],
+        }),
+        accepted_status_codes: '["200-299","301"]',
+      },
+      tags: [{ id: 1, name: 'prod', color: '#ff0000' }],
+      notification_ids: [2, 3],
+    } satisfies MonitorResponse
+
+    expect(monitorFromResponse(item)).toMatchObject({
+      id: 12,
+      name: 'site',
+      accepted_status_codes: ['200-299', '301'],
+      tags: [{ id: 1, name: 'prod', color: '#ff0000' }],
+      notification_ids: [2, 3],
+    })
+  })
+
+  it('normalizes missing monitor associations to empty arrays', () => {
+    const item = {
+      monitor: {
+        ...monitor({ id: 12 }),
+        accepted_status_codes: 'bad-json',
+      },
+      tags: undefined,
+      notification_ids: undefined,
+    } as unknown as MonitorResponse
+
+    expect(monitorFromResponse(item)).toMatchObject({
+      accepted_status_codes: ['200-299'],
+      tags: [],
+      notification_ids: [],
+    })
+    expect(monitorsFromResponses(null)).toEqual([])
+    expect(monitorsFromResponses(undefined)).toEqual([])
   })
 
   it('builds group trees and excludes descendants from group options', () => {

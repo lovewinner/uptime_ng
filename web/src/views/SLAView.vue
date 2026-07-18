@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
 import api from '@/api/http'
+import { arrayFromResponse } from '@/api/responses'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouter } from 'vue-router'
 import {
@@ -38,7 +39,7 @@ async function fetchSLA() {
     const res = await api.get('/monitors/uptime/overall', {
       params: { period: period.value },
     })
-    slaData.value = res.data || []
+    slaData.value = arrayFromResponse<SLAItem>(res.data)
   } catch {
     slaData.value = []
   } finally {

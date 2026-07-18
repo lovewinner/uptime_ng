@@ -70,7 +70,7 @@ describe('auth store', () => {
 
   it('clears auth state and disconnects websocket on logout', () => {
     const store = useAuthStore()
-    store.setAuth('jwt', 'alice', 'admin', 7)
+    store.setAuth({ token: 'jwt', username: 'alice', role: 'admin', userId: 7 })
 
     store.logout()
 

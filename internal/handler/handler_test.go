@@ -102,6 +102,7 @@ func setupRouter(t *testing.T, db *gorm.DB, scheduler MonitorScheduler) (*gin.En
 	monitor := NewMonitorHandler(db, scheduler)
 	api.GET("/monitors", monitor.List)
 	api.POST("/monitors", monitor.Create)
+	api.GET("/monitors/:id", monitor.Get)
 	api.PUT("/monitors/:id", monitor.Update)
 	api.DELETE("/monitors/:id", monitor.Delete)
 	api.POST("/monitors/:id/resume", monitor.Resume)
@@ -111,6 +112,9 @@ func setupRouter(t *testing.T, db *gorm.DB, scheduler MonitorScheduler) (*gin.En
 	api.GET("/monitors/export", ie.ExportMonitors)
 	api.POST("/monitors/import", ie.ImportExecute)
 	notif := NewNotificationHandler(db)
+	api.GET("/notifications/:id", notif.Get)
+	api.PUT("/notifications/:id", notif.Update)
+	api.DELETE("/notifications/:id", notif.Delete)
 	api.POST("/notifications/:id/test", notif.Test)
 	maintenance := NewMaintenanceHandler(db)
 	api.GET("/maintenance", maintenance.List)
@@ -119,9 +123,15 @@ func setupRouter(t *testing.T, db *gorm.DB, scheduler MonitorScheduler) (*gin.En
 	api.DELETE("/maintenance/:id", maintenance.Delete)
 	hb := NewHeartbeatHandler(db)
 	api.GET("/monitors/status", hb.GetRecentStatus)
+	api.GET("/monitors/:id/beats", hb.GetBeats)
+	api.GET("/monitors/:id/beats/important", hb.GetImportantBeats)
+	api.GET("/monitors/:id/incidents", hb.GetIncidents)
 	api.GET("/monitors/:id/status", hb.GetStatus)
 	sla := NewSLAHandler(db)
 	api.GET("/monitors/uptime/overall", sla.GetOverall)
+	api.GET("/monitors/:id/uptime", sla.GetUptime)
+	api.GET("/monitors/:id/uptime/data", sla.GetUptimeData)
+	api.GET("/monitors/:id/uptime/summary", sla.GetUptimeSummary)
 	return r, user
 }
 
@@ -172,6 +182,114 @@ func authedRequest(t *testing.T, r http.Handler, method, path string, body any, 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+func TestInvalidMonitorIDReturnsBadRequest(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	tests := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/monitors/bad"},
+		{method: http.MethodPut, path: "/api/monitors/bad"},
+		{method: http.MethodDelete, path: "/api/monitors/bad"},
+		{method: http.MethodPost, path: "/api/monitors/bad/pause"},
+		{method: http.MethodPost, path: "/api/monitors/bad/resume"},
+		{method: http.MethodGet, path: "/api/monitors/bad/beats"},
+		{method: http.MethodGet, path: "/api/monitors/bad/beats/important"},
+		{method: http.MethodGet, path: "/api/monitors/bad/incidents"},
+		{method: http.MethodGet, path: "/api/monitors/bad/status"},
+		{method: http.MethodGet, path: "/api/monitors/bad/uptime"},
+		{method: http.MethodGet, path: "/api/monitors/bad/uptime/data"},
+		{method: http.MethodGet, path: "/api/monitors/bad/uptime/summary"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			resp := authedRequest(t, r, tt.method, tt.path, gin.H{"name": "ignored"}, token)
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+			}
+			var body map[string]string
+			if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["code"] != "invalid_monitor_id" {
+				t.Fatalf("body=%v", body)
+			}
+		})
+	}
+}
+
+func TestInvalidResourceIDReturnsBadRequest(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		code   string
+	}{
+		{name: "update user", method: http.MethodPatch, path: "/api/auth/users/bad", code: "invalid_user_id"},
+		{name: "get notification", method: http.MethodGet, path: "/api/notifications/bad", code: "invalid_notification_id"},
+		{name: "update notification", method: http.MethodPut, path: "/api/notifications/bad", code: "invalid_notification_id"},
+		{name: "delete notification", method: http.MethodDelete, path: "/api/notifications/bad", code: "invalid_notification_id"},
+		{name: "test notification", method: http.MethodPost, path: "/api/notifications/bad/test", code: "invalid_notification_id"},
+		{name: "update maintenance", method: http.MethodPut, path: "/api/maintenance/bad", code: "invalid_maintenance_id"},
+		{name: "delete maintenance", method: http.MethodDelete, path: "/api/maintenance/bad", code: "invalid_maintenance_id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := authedRequest(t, r, tt.method, tt.path, gin.H{"name": "ignored"}, token)
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+			}
+			var body map[string]string
+			if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["code"] != tt.code {
+				t.Fatalf("body=%v want code %s", body, tt.code)
+			}
+		})
+	}
+}
+
+func TestDeleteMissingOwnedResourcesReturnsNotFound(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	tests := []struct {
+		name string
+		path string
+		code string
+	}{
+		{name: "notification", path: "/api/notifications/999", code: "notification_not_found"},
+		{name: "maintenance", path: "/api/maintenance/999", code: "maintenance_not_found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := authedRequest(t, r, http.MethodDelete, tt.path, nil, token)
+			if resp.Code != http.StatusNotFound {
+				t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+			}
+			var body map[string]string
+			if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["code"] != tt.code {
+				t.Fatalf("body=%v want code %s", body, tt.code)
+			}
+		})
+	}
 }
 
 func TestMonitorMutationsNotifyScheduler(t *testing.T) {
@@ -354,6 +472,10 @@ func TestImportExportUserIsolation(t *testing.T) {
 	otherMonitor := model.Monitor{UserID: other.ID, Name: "other", Type: "http", URL: "https://other", Active: true, AcceptedStatusCodes: `["200-299"]`}
 	db.Create(&ownMonitor)
 	db.Create(&otherMonitor)
+	otherNotif := model.Notification{UserID: other.ID, Name: "ops", Type: model.NotificationTypeEmail, Config: `{"to":"other@example.com"}`, Active: true}
+	ownNotif := model.Notification{UserID: user.ID, Name: "ops", Type: model.NotificationTypeEmail, Config: `{"to":"own@example.com"}`, Active: true}
+	db.Create(&otherNotif)
+	db.Create(&ownNotif)
 
 	exportResp := authedRequest(t, r, http.MethodGet, "/api/monitors/export", nil, token)
 	if exportResp.Code != http.StatusOK {
@@ -367,9 +489,10 @@ func TestImportExportUserIsolation(t *testing.T) {
 
 	importResp := authedRequest(t, r, http.MethodPost, "/api/monitors/import", ImportRequest{
 		Strategy: "overwrite",
-		Data: ExportFile{Monitors: []ExportMonitor{{
-			Name: "other", Type: "http", URL: "https://new", Active: true, AcceptedStatusCodes: []string{"200-299"},
-		}}},
+		Data: ExportFile{Monitors: []ExportMonitor{
+			{Name: "other", Type: "http", URL: "https://new", Active: true, AcceptedStatusCodes: []string{"200-299"}},
+			{Name: "linked", Type: "http", URL: "https://linked", Active: true, AcceptedStatusCodes: []string{"200-299"}, NotificationNames: []string{"ops"}},
+		}},
 	}, token)
 	if importResp.Code != http.StatusOK {
 		t.Fatalf("import code=%d body=%s", importResp.Code, importResp.Body.String())
@@ -378,6 +501,17 @@ func TestImportExportUserIsolation(t *testing.T) {
 	db.First(&stillOther, otherMonitor.ID)
 	if stillOther.URL != "https://other" {
 		t.Fatalf("other user's monitor was modified: %s", stillOther.URL)
+	}
+	var linked model.Monitor
+	if err := db.Where("user_id = ? AND name = ?", user.ID, "linked").First(&linked).Error; err != nil {
+		t.Fatalf("linked monitor missing: %v", err)
+	}
+	var link model.MonitorNotification
+	if err := db.Where("monitor_id = ?", linked.ID).First(&link).Error; err != nil {
+		t.Fatalf("linked monitor notification missing: %v", err)
+	}
+	if link.NotificationID != ownNotif.ID {
+		t.Fatalf("linked notification=%d want owned=%d", link.NotificationID, ownNotif.ID)
 	}
 }
 

@@ -23,3 +23,26 @@ func TestPositiveIntParam(t *testing.T) {
 		})
 	}
 }
+
+func TestUintParam(t *testing.T) {
+	tests := []struct {
+		name   string
+		value  string
+		want   uint
+		wantOK bool
+	}{
+		{name: "valid", value: "25", want: 25, wantOK: true},
+		{name: "invalid", value: "bad", want: 0, wantOK: false},
+		{name: "zero", value: "0", want: 0, wantOK: false},
+		{name: "negative", value: "-1", want: 0, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := uintParam(tt.value)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("uintParam(%q)=(%d,%v) want (%d,%v)", tt.value, got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}

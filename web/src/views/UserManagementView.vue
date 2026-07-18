@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import api from '@/api/http'
 import { apiErrorMessage, isDialogCancel } from '@/api/errors'
+import { arrayFromResponse } from '@/api/responses'
+import type { User } from '@/api/types'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   activeTagType,
@@ -13,13 +15,6 @@ import {
   roleToggleText,
 } from './userManagement'
 
-interface User {
-  id: number
-  username: string
-  role: string
-  active: boolean
-}
-
 const users = ref<User[]>([])
 const loading = ref(false)
 
@@ -27,7 +22,7 @@ async function fetchUsers() {
   loading.value = true
   try {
     const res = await api.get('/auth/users')
-    users.value = res.data
+    users.value = arrayFromResponse<User>(res.data)
   } catch {
     // ignore
   } finally {
