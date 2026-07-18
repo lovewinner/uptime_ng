@@ -186,11 +186,9 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if monitor.Type != model.MonitorTypeGroup {
-		for _, nid := range req.NotificationIDs {
-			mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
-			tx.Create(&mn)
-		}
+	for _, nid := range req.NotificationIDs {
+		mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
+		tx.Create(&mn)
 	}
 
 	for i, tagName := range req.TagNames {
@@ -215,7 +213,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if monitor.Active && monitor.Type != model.MonitorTypeGroup && h.Scheduler != nil {
+	if monitor.Active && h.Scheduler != nil {
 		h.Scheduler.StartMonitor(&monitor)
 	}
 
@@ -385,13 +383,11 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if req.NotificationIDs != nil || monitor.Type == model.MonitorTypeGroup {
+	if req.NotificationIDs != nil {
 		tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorNotification{})
-		if monitor.Type != model.MonitorTypeGroup {
-			for _, nid := range req.NotificationIDs {
-				mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
-				tx.Create(&mn)
-			}
+		for _, nid := range req.NotificationIDs {
+			mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
+			tx.Create(&mn)
 		}
 	}
 
@@ -420,12 +416,9 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	}
 
 	if h.Scheduler != nil {
-		if wasGroup || monitor.Type == model.MonitorTypeGroup {
-			h.Scheduler.StopMonitor(monitor.ID)
-		}
-		if monitor.Active && monitor.Type != model.MonitorTypeGroup {
+		if monitor.Active {
 			h.Scheduler.RestartMonitor(&monitor)
-		} else if monitor.Type != model.MonitorTypeGroup {
+		} else {
 			h.Scheduler.StopMonitor(monitor.ID)
 		}
 	}
@@ -447,6 +440,7 @@ func (h *MonitorHandler) Delete(c *gin.Context) {
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.Heartbeat{})
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.MonitorNotification{})
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.MonitorTag{})
+	tx.Where("monitor_id = ?", monitorID).Delete(&model.MaintenanceWindow{})
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatMinutely{})
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatHourly{})
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatDaily{})
@@ -474,13 +468,23 @@ func (h *MonitorHandler) Resume(c *gin.Context) {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
-	if err := h.DB.Model(&monitor).Update("active", true).Error; err != nil {
+	monitors := []model.Monitor{monitor}
+	if monitor.Type == model.MonitorTypeGroup {
+		monitors = append(monitors, h.descendantMonitors(userID.(uint), monitor.ID)...)
+	}
+	ids := make([]uint, 0, len(monitors))
+	for _, m := range monitors {
+		ids = append(ids, m.ID)
+	}
+	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", true).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_resume_failed", err.Error())
 		return
 	}
-	monitor.Active = true
-	if h.Scheduler != nil && monitor.Type != model.MonitorTypeGroup {
-		h.Scheduler.StartMonitor(&monitor)
+	if h.Scheduler != nil {
+		for i := range monitors {
+			monitors[i].Active = true
+			h.Scheduler.RestartMonitor(&monitors[i])
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "monitor resumed"})
 }
@@ -494,12 +498,22 @@ func (h *MonitorHandler) Pause(c *gin.Context) {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
-	if err := h.DB.Model(&monitor).Update("active", false).Error; err != nil {
+	monitors := []model.Monitor{monitor}
+	if monitor.Type == model.MonitorTypeGroup {
+		monitors = append(monitors, h.descendantMonitors(userID.(uint), monitor.ID)...)
+	}
+	ids := make([]uint, 0, len(monitors))
+	for _, m := range monitors {
+		ids = append(ids, m.ID)
+	}
+	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", false).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_pause_failed", err.Error())
 		return
 	}
 	if h.Scheduler != nil {
-		h.Scheduler.StopMonitor(monitor.ID)
+		for _, m := range monitors {
+			h.Scheduler.StopMonitor(m.ID)
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "monitor paused"})
 }
@@ -561,4 +575,17 @@ func (h *MonitorHandler) wouldCreateGroupCycle(userID uint, monitorID uint, pare
 		current = *parent.GroupID
 	}
 	return false
+}
+
+func (h *MonitorHandler) descendantMonitors(userID uint, groupID uint) []model.Monitor {
+	var children []model.Monitor
+	h.DB.Where("user_id = ? AND group_id = ?", userID, groupID).Find(&children)
+	results := make([]model.Monitor, 0, len(children))
+	for _, child := range children {
+		results = append(results, child)
+		if child.Type == model.MonitorTypeGroup {
+			results = append(results, h.descendantMonitors(userID, child.ID)...)
+		}
+	}
+	return results
 }

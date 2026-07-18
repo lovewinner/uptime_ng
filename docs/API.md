@@ -102,7 +102,7 @@ Core fields:
 }
 ```
 
-`type` may be `http`, `tcp`, `ping`, `dns`, `push`, or `group`. Group monitors are containers, do not run checks, and can be nested through `group_id`.
+`type` may be `http`, `tcp`, `ping`, `dns`, `push`, or `group`. Group monitors can be nested through `group_id`; they run on their own `interval` and are `UP` only when every child monitor/group is `UP`.
 
 HTTP fields:
 
@@ -186,6 +186,10 @@ Response:
 
 Group status is aggregated recursively: any child `DOWN` makes the group `DOWN`; otherwise any child `PENDING` makes it `PENDING`; otherwise a group with `UP` children is `UP`; an empty group is `PENDING`.
 
+### `GET /monitors/:id/status`
+
+Returns the status for a single monitor or group. Group status is calculated on the server for the requested group.
+
 ### `GET /monitors/:id/beats?period=3600`
 
 Returns heartbeats newer than `period` seconds.
@@ -259,6 +263,30 @@ Deletes config and monitor links.
 ### `POST /notifications/:id/test`
 
 Sends a real test message. Returns `400` for invalid config and `502` for provider/send failures.
+
+## Maintenance
+
+Maintenance windows suppress checks and notifications while active. A window with `monitor_id=null` applies to all monitors owned by the user.
+
+### `GET /maintenance`
+
+Lists maintenance windows.
+
+### `POST /maintenance`
+
+Request:
+
+```json
+{"name":"Deploy","monitor_id":1,"start_at":"2026-07-18T10:00:00Z","end_at":"2026-07-18T11:00:00Z","active":true}
+```
+
+### `PUT /maintenance/:id`
+
+Same request shape as create.
+
+### `DELETE /maintenance/:id`
+
+Deletes a maintenance window.
 
 ## Import / Export
 

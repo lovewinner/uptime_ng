@@ -56,10 +56,6 @@ func (s *Scheduler) StartAll() error {
 }
 
 func (s *Scheduler) StartMonitor(monitor *model.Monitor) {
-	if monitor.Type == model.MonitorTypeGroup {
-		return
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -134,7 +130,7 @@ func (s *Scheduler) RunningCount() int {
 }
 
 func (r *MonitorRunner) run() {
-	if r.Monitor.Type == model.MonitorTypePush || r.Monitor.Type == model.MonitorTypeGroup {
+	if r.Monitor.Type == model.MonitorTypePush {
 		return
 	}
 
@@ -154,6 +150,14 @@ func (r *MonitorRunner) run() {
 
 func (r *MonitorRunner) beat() {
 	monitor := r.Monitor
+	if window, ok := r.activeMaintenanceWindow(monitor, time.Now()); ok {
+		r.maintenanceBeat(window)
+		return
+	}
+	if monitor.Type == model.MonitorTypeGroup {
+		r.groupBeat()
+		return
+	}
 	checker := GetChecker(monitor.Type)
 	if checker == nil {
 		log.Printf("Unknown monitor type: %s for monitor %d", monitor.Type, monitor.ID)
@@ -224,6 +228,77 @@ func (r *MonitorRunner) beat() {
 
 	r.Calculator.Update(beat.Status, beat.PingMS, now)
 
+	r.DB.Create(&beat)
+
+	if r.Publisher != nil {
+		r.Publisher.SendToUser(monitor.UserID, "heartbeat", beat)
+	}
+}
+
+func (r *MonitorRunner) activeMaintenanceWindow(monitor *model.Monitor, now time.Time) (model.MaintenanceWindow, bool) {
+	var window model.MaintenanceWindow
+	err := r.DB.Where("user_id = ? AND active = ? AND start_at <= ? AND end_at > ?", monitor.UserID, true, now, now).
+		Where("monitor_id IS NULL OR monitor_id = ?", monitor.ID).
+		Order("monitor_id DESC, start_at DESC").
+		First(&window).Error
+	return window, err == nil
+}
+
+func (r *MonitorRunner) maintenanceBeat(window model.MaintenanceWindow) {
+	now := time.Now()
+	beat := model.Heartbeat{
+		MonitorID: r.Monitor.ID,
+		Status:    model.StatusMaintenance,
+		Msg:       "maintenance window: " + window.Name,
+		Time:      now,
+	}
+	r.Calculator.Update(beat.Status, nil, now)
+	r.DB.Create(&beat)
+	if r.Publisher != nil {
+		r.Publisher.SendToUser(r.Monitor.UserID, "heartbeat", beat)
+	}
+}
+
+func (r *MonitorRunner) groupBeat() {
+	monitor := r.Monitor
+	snapshot, err := ComputeMonitorStatus(r.DB, monitor.UserID, monitor.ID)
+	if err != nil {
+		log.Printf("Group check error for monitor %s: %v", monitor.Name, err)
+		return
+	}
+
+	now := time.Now()
+	beat := model.Heartbeat{
+		MonitorID: monitor.ID,
+		Status:    snapshot.Status,
+		Msg:       GroupStatusMessage(snapshot.Status),
+		Time:      now,
+	}
+
+	var previousBeat model.Heartbeat
+	r.DB.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&previousBeat)
+
+	isFirstBeat := previousBeat.ID == 0
+	previousStatus := previousBeat.Status
+	if isFirstBeat {
+		previousStatus = model.StatusUP
+	}
+
+	beat.DownCount = previousBeat.DownCount
+	beat.Retries = previousBeat.Retries
+	if beat.Status == model.StatusDown {
+		beat.DownCount++
+	} else {
+		beat.DownCount = 0
+		beat.Retries = 0
+	}
+
+	beat.Important = isImportantBeat(isFirstBeat, previousStatus, beat.Status)
+	if beat.Important {
+		r.sendNotification(isFirstBeat, previousStatus, beat)
+	}
+
+	r.Calculator.Update(beat.Status, nil, now)
 	r.DB.Create(&beat)
 
 	if r.Publisher != nil {

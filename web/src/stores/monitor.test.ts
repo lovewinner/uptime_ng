@@ -96,8 +96,7 @@ describe('monitor store helpers', () => {
     expect(tree[0]?.name).toBe('root')
     expect(tree[0]?.children?.[0]?.name).toBe('child')
     expect(tree[0]?.children?.[0]?.children?.[0]?.name).toBe('site')
-    expect(tree[1]?.name).toBe('未分组')
-    expect(tree[1]?.children?.[0]?.name).toBe('loose')
+    expect(tree[1]?.name).toBe('loose')
 
     expect(store.groupOptions(1).map((item) => item.id)).toEqual([])
     expect(store.groupLabel(store.monitors[1]!)).toBe('root / child')

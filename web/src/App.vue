@@ -45,6 +45,7 @@ onUnmounted(() => {
         <el-button text style="color: #ccc" @click="$router.push('/monitors')">监控项</el-button>
         <el-button text style="color: #ccc" @click="$router.push('/notifications')">通知</el-button>
         <el-button text style="color: #ccc" @click="$router.push('/sla')">SLA报表</el-button>
+        <el-button text style="color: #ccc" @click="$router.push('/maintenance')">维护窗口</el-button>
         <el-button v-if="auth.isAdmin()" text style="color: #ccc" @click="$router.push('/users')">用户管理</el-button>
       </nav>
       <div class="header-right">
@@ -59,6 +60,7 @@ onUnmounted(() => {
         <el-menu-item index="/monitors" @click="$router.push('/monitors')">监控项</el-menu-item>
         <el-menu-item index="/notifications" @click="$router.push('/notifications')">通知</el-menu-item>
         <el-menu-item index="/sla" @click="$router.push('/sla')">SLA报表</el-menu-item>
+        <el-menu-item index="/maintenance" @click="$router.push('/maintenance')">维护窗口</el-menu-item>
         <el-menu-item v-if="auth.isAdmin()" index="/users" @click="$router.push('/users')">用户管理</el-menu-item>
       </el-menu>
     </el-drawer>

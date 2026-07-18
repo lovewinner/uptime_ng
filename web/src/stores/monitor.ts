@@ -42,6 +42,21 @@ export const useMonitorStore = defineStore('monitor', () => {
     }
   }
 
+  async function fetchMonitorStatus(id: number) {
+    const res = await api.get(`/monitors/${id}/status`)
+    upsertStatus(res.data as MonitorStatus)
+    return res.data as MonitorStatus
+  }
+
+  function upsertStatus(status: MonitorStatus) {
+    const idx = statusList.findIndex((s) => s.id === status.id)
+    if (idx >= 0) {
+      statusList[idx] = status
+    } else {
+      statusList.push(status)
+    }
+  }
+
   async function fetchMonitors() {
     loading.value = true
     try {
@@ -70,32 +85,27 @@ export const useMonitorStore = defineStore('monitor', () => {
   async function createMonitor(monitor: MonitorPayload) {
     const res = await api.post('/monitors', monitor)
     await fetchMonitors()
-    await fetchStatus()
     return res.data
   }
 
   async function updateMonitor(id: number, monitor: MonitorPayload) {
     await api.put(`/monitors/${id}`, monitor)
     await fetchMonitors()
-    await fetchStatus()
   }
 
   async function deleteMonitor(id: number) {
     await api.delete(`/monitors/${id}`)
     await fetchMonitors()
-    await fetchStatus()
   }
 
   async function pauseMonitor(id: number) {
     await api.post(`/monitors/${id}/pause`)
     await fetchMonitors()
-    await fetchStatus()
   }
 
   async function resumeMonitor(id: number) {
     await api.post(`/monitors/${id}/resume`)
     await fetchMonitors()
-    await fetchStatus()
   }
 
   function parseCodes(raw: string): string[] {
@@ -114,67 +124,13 @@ export const useMonitorStore = defineStore('monitor', () => {
     })
 
     const roots: MonitorTreeNode[] = []
-    const orphans: MonitorTreeNode[] = []
     nodes.forEach((node) => {
       if (node.group_id && nodes.has(node.group_id)) {
         nodes.get(node.group_id)!.children!.push(node)
-      } else if (node.type === 'group') {
-        roots.push(node)
       } else {
-        orphans.push(node)
+        roots.push(node)
       }
     })
-
-    if (orphans.length > 0) {
-      roots.push({
-        id: 0,
-        user_id: 0,
-        name: '未分组',
-        description: '',
-        type: 'group',
-        group_id: null,
-        active: true,
-        url: '',
-        hostname: '',
-        port: 0,
-        method: '',
-        interval: 0,
-        timeout: 0,
-        max_retries: 0,
-        retry_interval: 0,
-        resend_interval: 0,
-        headers: '',
-        body: '',
-        keyword: '',
-        invert_keyword: false,
-        ignore_tls: false,
-        upside_down: false,
-        max_redirects: 0,
-        auth_method: '',
-        basic_auth_user: '',
-        auth_workstation: '',
-        auth_domain: '',
-        tls_ca: '',
-        oauth_token_url: '',
-        oauth_scopes: '',
-        oauth_auth_method: '',
-        oauth_audience: '',
-        dns_resolve_type: '',
-        dns_resolve_server: '',
-        http_body_encoding: '',
-        retry_only_on_status_code: false,
-        cache_bust: false,
-        save_response: false,
-        save_error_response: false,
-        response_max_length: 0,
-        ping_count: 0,
-        ping_per_request_timeout: 0,
-        accepted_status_codes: [],
-        notification_ids: [],
-        tags: [],
-        children: orphans,
-      })
-    }
 
     return roots
   }
@@ -237,7 +193,7 @@ export const useMonitorStore = defineStore('monitor', () => {
   return {
     statusList, monitors, notifications, loading,
     fetchStatus, fetchMonitors, fetchNotifications,
-    createMonitor, updateMonitor, deleteMonitor, pauseMonitor, resumeMonitor,
+    fetchMonitorStatus, createMonitor, updateMonitor, deleteMonitor, pauseMonitor, resumeMonitor,
     statusColor, statusText, parseCodes, buildMonitorTree, groupOptions, groupLabel, statusByID,
   }
 })

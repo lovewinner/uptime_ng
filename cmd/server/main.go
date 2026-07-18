@@ -61,6 +61,7 @@ func main() {
 		&model.Tag{},
 		&model.MonitorTag{},
 		&model.Incident{},
+		&model.MaintenanceWindow{},
 		&model.SLAReport{},
 		&model.Setting{},
 	); err != nil {

@@ -173,3 +173,14 @@ export interface Notification {
   config: string
   active: boolean
 }
+
+export interface MaintenanceWindow {
+  id: number
+  user_id: number
+  monitor_id: number | null
+  name: string
+  description: string
+  start_at: string
+  end_at: string
+  active: boolean
+}

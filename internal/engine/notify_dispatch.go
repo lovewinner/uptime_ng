@@ -47,7 +47,7 @@ func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat,
 	}
 
 	// Also send to global feishu webhook if configured
-	if config.AppConfig.Feishu.WebhookURL != "" {
+	if config.AppConfig != nil && config.AppConfig.Feishu.WebhookURL != "" {
 		alreadySent := false
 		for _, mn := range mnList {
 			var notif model.Notification

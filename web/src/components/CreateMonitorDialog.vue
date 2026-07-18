@@ -256,7 +256,6 @@ async function handleSubmit() {
     const payload: MonitorPayload = {
       ...form.value,
       port: form.value.port || 0,
-      notification_ids: form.value.type === 'group' ? [] : form.value.notification_ids,
     }
     if (isEdit.value) {
       await store.updateMonitor(props.monitor!.id, payload)
@@ -329,6 +328,22 @@ function errorMessage(e: unknown, fallback: string): string {
           />
         </el-select>
       </el-form-item>
+
+      <template v-if="form.type === 'group'">
+        <el-form-item label="检查间隔(s)">
+          <el-input-number v-model="form.interval" :min="3" :max="86400" />
+        </el-form-item>
+        <el-form-item label="关联通知">
+          <el-select v-model="form.notification_ids" multiple placeholder="选择通知配置" style="width: 100%">
+            <el-option
+              v-for="n in store.notifications"
+              :key="n.id"
+              :label="`${n.name} (${n.type})`"
+              :value="n.id"
+            />
+          </el-select>
+        </el-form-item>
+      </template>
 
       <template v-if="form.type === 'http'">
         <el-form-item label="URL" prop="url" :rules="[{ required: true, message: '请输入URL' }]">

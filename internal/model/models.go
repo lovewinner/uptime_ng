@@ -176,6 +176,20 @@ type Incident struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+type MaintenanceWindow struct {
+	ID          uint           `gorm:"primaryKey" json:"id"`
+	UserID      uint           `gorm:"index;not null" json:"user_id"`
+	MonitorID   *uint          `gorm:"index" json:"monitor_id"`
+	Name        string         `gorm:"not null;size:255" json:"name"`
+	Description string         `gorm:"size:500" json:"description"`
+	StartAt     time.Time      `gorm:"not null;index" json:"start_at"`
+	EndAt       time.Time      `gorm:"not null;index" json:"end_at"`
+	Active      bool           `gorm:"default:true" json:"active"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
 type SLAReport struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	UserID      uint      `gorm:"index;not null" json:"user_id"`

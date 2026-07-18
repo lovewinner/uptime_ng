@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"uptime_ng/internal/config"
+	"uptime_ng/internal/engine"
 	"uptime_ng/internal/middleware"
 	"uptime_ng/internal/model"
 )
@@ -63,6 +64,7 @@ func testDB(t *testing.T) *gorm.DB {
 		&model.Tag{},
 		&model.MonitorTag{},
 		&model.Incident{},
+		&model.MaintenanceWindow{},
 		&model.SLAReport{},
 		&model.Setting{},
 	); err != nil {
@@ -110,8 +112,14 @@ func setupRouter(t *testing.T, db *gorm.DB, scheduler MonitorScheduler) (*gin.En
 	api.POST("/monitors/import", ie.ImportExecute)
 	notif := NewNotificationHandler(db)
 	api.POST("/notifications/:id/test", notif.Test)
+	maintenance := NewMaintenanceHandler(db)
+	api.GET("/maintenance", maintenance.List)
+	api.POST("/maintenance", maintenance.Create)
+	api.PUT("/maintenance/:id", maintenance.Update)
+	api.DELETE("/maintenance/:id", maintenance.Delete)
 	hb := NewHeartbeatHandler(db)
 	api.GET("/monitors/status", hb.GetRecentStatus)
+	api.GET("/monitors/:id/status", hb.GetStatus)
 	sla := NewSLAHandler(db)
 	api.GET("/monitors/uptime/overall", sla.GetOverall)
 	return r, user
@@ -214,7 +222,7 @@ func TestMonitorMutationsNotifyScheduler(t *testing.T) {
 	for _, call := range scheduler.calls {
 		got = append(got, call.action)
 	}
-	want := []string{"start", "restart", "stop", "start", "stop"}
+	want := []string{"start", "restart", "stop", "restart", "stop"}
 	if len(got) != len(want) {
 		t.Fatalf("scheduler calls=%v want=%v", got, want)
 	}
@@ -373,7 +381,7 @@ func TestImportExportUserIsolation(t *testing.T) {
 	}
 }
 
-func TestMonitorGroupValidationAndSchedulerSkip(t *testing.T) {
+func TestMonitorGroupValidationAndSchedulerStart(t *testing.T) {
 	db := testDB(t)
 	scheduler := &fakeScheduler{}
 	r, user := setupRouter(t, db, scheduler)
@@ -390,8 +398,8 @@ func TestMonitorGroupValidationAndSchedulerSkip(t *testing.T) {
 	if err := json.Unmarshal(groupResp.Body.Bytes(), &group); err != nil {
 		t.Fatalf("decode group: %v", err)
 	}
-	if len(scheduler.calls) != 0 {
-		t.Fatalf("group should not start scheduler: %+v", scheduler.calls)
+	if len(scheduler.calls) != 1 || scheduler.calls[0].action != "start" {
+		t.Fatalf("group should start scheduler: %+v", scheduler.calls)
 	}
 
 	childResp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
@@ -435,11 +443,11 @@ func TestMonitorGroupStatusAggregatesChildren(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status code=%d body=%s", resp.Code, resp.Body.String())
 	}
-	var statuses []monitorStatusItem
+	var statuses []engine.MonitorStatusSnapshot
 	if err := json.Unmarshal(resp.Body.Bytes(), &statuses); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
-	byID := map[uint]monitorStatusItem{}
+	byID := map[uint]engine.MonitorStatusSnapshot{}
 	for _, s := range statuses {
 		byID[s.ID] = s
 	}
@@ -502,5 +510,49 @@ func TestImportExportPreservesGroupPath(t *testing.T) {
 	db2.First(&importedGroup, *imported.GroupID)
 	if importedGroup.Name != "child" {
 		t.Fatalf("imported group=%+v", importedGroup)
+	}
+}
+
+func TestMaintenanceWindowCRUD(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+	monitor := model.Monitor{UserID: user.ID, Name: "site", Type: model.MonitorTypeHTTP, URL: "https://example.com", Active: true}
+	db.Create(&monitor)
+
+	createResp := authedRequest(t, r, http.MethodPost, "/api/maintenance", gin.H{
+		"name":       "deploy",
+		"monitor_id": monitor.ID,
+		"start_at":   time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+		"end_at":     time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"active":     true,
+	}, token)
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create code=%d body=%s", createResp.Code, createResp.Body.String())
+	}
+	var window model.MaintenanceWindow
+	if err := json.Unmarshal(createResp.Body.Bytes(), &window); err != nil {
+		t.Fatalf("decode window: %v", err)
+	}
+	if window.MonitorID == nil || *window.MonitorID != monitor.ID {
+		t.Fatalf("monitor_id=%v want %d", window.MonitorID, monitor.ID)
+	}
+
+	updateResp := authedRequest(t, r, http.MethodPut, fmt.Sprintf("/api/maintenance/%d", window.ID), gin.H{
+		"name":     "deploy updated",
+		"start_at": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+		"end_at":   time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+		"active":   false,
+	}, token)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update code=%d body=%s", updateResp.Code, updateResp.Body.String())
+	}
+	listResp := authedRequest(t, r, http.MethodGet, "/api/maintenance", nil, token)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list code=%d body=%s", listResp.Code, listResp.Body.String())
+	}
+	deleteResp := authedRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/maintenance/%d", window.ID), nil, token)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("delete code=%d body=%s", deleteResp.Code, deleteResp.Body.String())
 	}
 }

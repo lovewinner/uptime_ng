@@ -44,10 +44,17 @@ func Setup(r *gin.Engine, db *gorm.DB, hub *handler.WSHub, scheduler handler.Mon
 	api.DELETE("/notifications/:id", notif.Delete)
 	api.POST("/notifications/:id/test", notif.Test)
 
+	maintenance := handler.NewMaintenanceHandler(db)
+	api.GET("/maintenance", maintenance.List)
+	api.POST("/maintenance", maintenance.Create)
+	api.PUT("/maintenance/:id", maintenance.Update)
+	api.DELETE("/maintenance/:id", maintenance.Delete)
+
 	hb := handler.NewHeartbeatHandler(db)
 	api.GET("/monitors/:id/beats", hb.GetBeats)
 	api.GET("/monitors/:id/beats/important", hb.GetImportantBeats)
 	api.GET("/monitors/:id/incidents", hb.GetIncidents)
+	api.GET("/monitors/:id/status", hb.GetStatus)
 	api.GET("/monitors/status", hb.GetRecentStatus)
 
 	sla := handler.NewSLAHandler(db)

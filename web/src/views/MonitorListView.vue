@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
@@ -18,6 +18,21 @@ const editingMonitor = ref<Monitor | null>(null)
 const exportVisible = ref(false)
 const importVisible = ref(false)
 const treeRows = computed(() => store.buildMonitorTree())
+const expandedIds = ref(new Set<number>())
+const refreshTimers = new Map<number, { timer: ReturnType<typeof setInterval>, interval: number }>()
+const visibleRows = computed(() => {
+  const rows: MonitorTreeNode[] = []
+  const walk = (nodes: MonitorTreeNode[]) => {
+    nodes.forEach((node) => {
+      rows.push(node)
+      if (node.children?.length && expandedIds.value.has(node.id)) {
+        walk(node.children)
+      }
+    })
+  }
+  walk(treeRows.value)
+  return rows
+})
 
 function handleCreate() {
   editingMonitor.value = null
@@ -31,6 +46,7 @@ function handleEdit(monitor: Monitor) {
 
 function handleSaved() {
   dialogVisible.value = false
+  syncVisibleRefresh()
   ElMessage.success('保存成功')
 }
 
@@ -41,6 +57,7 @@ async function handleDelete(monitor: Monitor) {
       confirmButtonText: '删除',
     })
     await store.deleteMonitor(monitor.id)
+    syncVisibleRefresh()
     ElMessage.success('已删除')
   } catch {
     // cancelled
@@ -50,21 +67,22 @@ async function handleDelete(monitor: Monitor) {
 async function handlePauseResume(monitor: Monitor) {
   if (monitor.active) {
     await store.pauseMonitor(monitor.id)
+    syncVisibleRefresh()
     ElMessage.success('已暂停')
   } else {
     await store.resumeMonitor(monitor.id)
+    syncVisibleRefresh()
     ElMessage.success('已恢复')
   }
 }
 
 function goDetail(id: number) {
-  if (id === 0) return
   router.push(`/monitors/${id}`)
 }
 
 function getUrl(monitor: MonitorTreeNode): string {
   if (monitor.type === 'group') {
-    return monitor.id === 0 ? '未归入任何分组的监控项' : `${monitor.children?.length || 0} 个子项`
+    return `${monitor.children?.length || 0} 个子项`
   }
   if (monitor.url) return monitor.url
   if (monitor.type === 'ping') return monitor.hostname || '-'
@@ -81,10 +99,17 @@ function getIntervalText(seconds: number): string {
 onMounted(async () => {
   await Promise.all([
     store.fetchMonitors(),
-    store.fetchStatus(),
     store.fetchNotifications(),
   ])
+  syncVisibleRefresh()
 })
+
+onUnmounted(() => {
+  refreshTimers.forEach(({ timer }) => clearInterval(timer))
+  refreshTimers.clear()
+})
+
+watch(visibleRows, () => syncVisibleRefresh())
 
 async function handleExport(ids?: number[]) {
   try {
@@ -104,9 +129,58 @@ async function handleExport(ids?: number[]) {
   }
 }
 
-function handleImported() {
-  store.fetchMonitors()
-  store.fetchStatus()
+async function handleImported() {
+  await store.fetchMonitors()
+  syncVisibleRefresh()
+}
+
+function handleExpandChange(row: MonitorTreeNode, expanded: boolean) {
+  const next = new Set(expandedIds.value)
+  if (expanded) {
+    next.add(row.id)
+  } else {
+    next.delete(row.id)
+    removeDescendantExpansion(row, next)
+  }
+  expandedIds.value = next
+}
+
+function removeDescendantExpansion(row: MonitorTreeNode, expanded: Set<number>) {
+  row.children?.forEach((child) => {
+    expanded.delete(child.id)
+    removeDescendantExpansion(child, expanded)
+  })
+}
+
+function syncVisibleRefresh() {
+  const visibleIDs = new Set(visibleRows.value.map((row) => row.id))
+  refreshTimers.forEach(({ timer }, id) => {
+    if (!visibleIDs.has(id)) {
+      clearInterval(timer)
+      refreshTimers.delete(id)
+    }
+  })
+  visibleRows.value.forEach((row) => {
+    const interval = Math.max(3, row.interval || 60)
+    const existing = refreshTimers.get(row.id)
+    if (existing && existing.interval === interval) return
+    if (existing) {
+      clearInterval(existing.timer)
+    }
+    refreshRowStatus(row)
+    refreshTimers.set(row.id, {
+      interval,
+      timer: setInterval(() => refreshRowStatus(row), interval * 1000),
+    })
+  })
+}
+
+async function refreshRowStatus(row: MonitorTreeNode) {
+  try {
+    await store.fetchMonitorStatus(row.id)
+  } catch {
+    // ignore row refresh errors
+  }
 }
 </script>
 
@@ -126,10 +200,10 @@ function handleImported() {
       v-loading="store.loading"
       stripe
       row-key="id"
-      default-expand-all
       :tree-props="{ children: 'children' }"
       style="width: 100%"
       @row-click="(row: Monitor) => goDetail(row.id)"
+      @expand-change="handleExpandChange"
     >
       <el-table-column label="名称" min-width="150">
         <template #default="{ row }">
@@ -161,22 +235,20 @@ function handleImported() {
       </el-table-column>
       <el-table-column label="间隔" width="80">
         <template #default="{ row }">
-          {{ row.type === 'group' ? '-' : getIntervalText(row.interval) }}
+          {{ getIntervalText(row.interval) }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <template v-if="row.id !== 0">
-            <el-button size="small" @click.stop="handleEdit(row)">编辑</el-button>
-            <el-button
-              size="small"
-              :type="row.active ? 'warning' : 'success'"
-              @click.stop="handlePauseResume(row)"
-            >
-              {{ row.active ? '暂停' : '恢复' }}
-            </el-button>
-            <el-button size="small" type="danger" @click.stop="handleDelete(row)">删除</el-button>
-          </template>
+          <el-button size="small" @click.stop="handleEdit(row)">编辑</el-button>
+          <el-button
+            size="small"
+            :type="row.active ? 'warning' : 'success'"
+            @click.stop="handlePauseResume(row)"
+          >
+            {{ row.active ? '暂停' : '恢复' }}
+          </el-button>
+          <el-button size="small" type="danger" @click.stop="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

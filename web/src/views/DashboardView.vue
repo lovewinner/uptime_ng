@@ -6,13 +6,16 @@ import { useRouter } from 'vue-router'
 const store = useMonitorStore()
 const router = useRouter()
 
-const totalCount = computed(() => store.statusList.length)
-const upCount = computed(() => store.statusList.filter((s) => s.status === 1).length)
-const downCount = computed(() => store.statusList.filter((s) => s.status === 0).length)
-const pendingCount = computed(() => store.statusList.filter((s) => s.status === 2).length)
-const currentFaults = computed(() => store.statusList.filter((s) => s.status === 0 || s.status === 2))
+const realStatuses = computed(() => store.statusList.filter((s) => s.type !== 'group'))
+const groupStatuses = computed(() => store.statusList.filter((s) => s.type === 'group'))
+const totalCount = computed(() => realStatuses.value.length)
+const groupCount = computed(() => groupStatuses.value.length)
+const upCount = computed(() => realStatuses.value.filter((s) => s.status === 1).length)
+const downCount = computed(() => realStatuses.value.filter((s) => s.status === 0).length)
+const pendingCount = computed(() => realStatuses.value.filter((s) => s.status === 2).length)
+const currentFaults = computed(() => realStatuses.value.filter((s) => s.status === 0 || s.status === 2))
 const avgPing = computed(() => {
-  const values = store.statusList.map((s) => s.ping_ms).filter((v) => v > 0)
+  const values = realStatuses.value.map((s) => s.ping_ms).filter((v) => v > 0)
   if (values.length === 0) return 0
   return values.reduce((sum, v) => sum + v, 0) / values.length
 })
@@ -36,6 +39,7 @@ function uptimePercent(v: number) {
 
     <div style="margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center">
       <el-statistic title="监控项总数" :value="totalCount" />
+      <el-statistic title="分组数" :value="groupCount" />
       <el-statistic title="UP" :value="upCount" />
       <el-statistic title="DOWN" :value="downCount" />
       <el-statistic title="PENDING" :value="pendingCount" />
@@ -44,7 +48,7 @@ function uptimePercent(v: number) {
     </div>
 
     <el-row :gutter="16">
-      <el-col v-for="s in store.statusList" :key="s.id" :xs="24" :sm="12" :md="8" :lg="6" style="margin-bottom: 16px">
+      <el-col v-for="s in realStatuses" :key="s.id" :xs="24" :sm="12" :md="8" :lg="6" style="margin-bottom: 16px">
         <el-card shadow="hover" style="cursor: pointer" @click="goMonitor(s.id)">
           <div style="display: flex; justify-content: space-between; align-items: center">
             <div>
@@ -93,6 +97,6 @@ function uptimePercent(v: number) {
       </el-table>
     </el-card>
 
-    <el-empty v-if="store.statusList.length === 0" description="暂无监控项，请先创建" />
+    <el-empty v-if="realStatuses.length === 0" description="暂无监控项，请先创建" />
   </div>
 </template>

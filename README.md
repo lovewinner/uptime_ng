@@ -13,16 +13,18 @@
 ## 功能特性
 
 ### 监控类型
-- HTTP/HTTPS（状态码、关键词、TLS 证书忽略）
+- HTTP/HTTPS（状态码、关键词、TLS 证书忽略、重定向、响应保存、Basic/Bearer/NTLM/OAuth2/mTLS）
 - TCP 端口连通性
 - ICMP Ping（含丢包率）
-- DNS 解析
+- DNS 解析（A/AAAA/CNAME/MX/TXT/NS，可指定 DNS server）
+- Group 分组（支持多层父子关系，按分组检查间隔汇总子项状态）
 
 ### 告警通知
 - **飞书**：交互卡片消息（标题、状态、详情、跳转链接）
 - **邮件**：SMTP 发送 HTML 邮件
 - **告警收敛**：可配置 resend_interval，避免风暴
 - **多通知源**：每个监控项可绑定多个通知配置
+- **维护窗口**：按时间窗口抑制检查与通知，可作用于单个监控或全部监控
 
 ### SLA 报表
 - 三级时间桶聚合：分钟级（24h）/小时级（30d）/天级（365d）
@@ -32,6 +34,7 @@
 
 ### 监控对象导入导出
 - 完整 JSON 格式导出（含 tags、通知关联）
+- 分组通过 group_path 导出，导入时恢复层级
 - 导入预览：自动检测冲突
 - 三种冲突策略：跳过 / 覆盖 / 复制（添加后缀）
 - 敏感信息脱敏（密码字段）
@@ -89,6 +92,7 @@ npm run dev
 - `GET    /api/monitors` - 监控项列表
 - `POST   /api/monitors` - 创建
 - `GET    /api/monitors/:id` - 详情
+- `GET    /api/monitors/:id/status` - 单个监控/分组状态
 - `PUT    /api/monitors/:id` - 更新
 - `DELETE /api/monitors/:id` - 删除
 - `POST   /api/monitors/:id/resume` - 恢复
@@ -111,6 +115,12 @@ npm run dev
 - `PUT    /api/notifications/:id` - 更新
 - `DELETE /api/notifications/:id` - 删除
 - `POST   /api/notifications/:id/test` - 测试发送
+
+### 维护窗口
+- `GET    /api/maintenance` - 列表
+- `POST   /api/maintenance` - 创建
+- `PUT    /api/maintenance/:id` - 更新
+- `DELETE /api/maintenance/:id` - 删除
 
 ### 导入导出
 - `GET  /api/monitors/export?ids=[1,2,3]` - 导出 JSON
@@ -167,6 +177,7 @@ feishu:
     {
       "name": "公司官网",
       "type": "http",
+      "group_path": ["生产环境", "官网"],
       "url": "https://www.example.com",
       "interval": 60,
       "timeout": 30,
