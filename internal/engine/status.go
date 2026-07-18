@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -47,7 +48,10 @@ func ComputeActiveStatuses(db *gorm.DB, userID uint) ([]MonitorStatusSnapshot, e
 func computeMonitorStatus(db *gorm.DB, monitor model.Monitor, visiting map[uint]bool) (MonitorStatusSnapshot, error) {
 	item := pendingStatusSnapshot(monitor)
 	if monitor.Type == model.MonitorTypeGroup {
-		status, uptime := computeGroupStatus(db, monitor, visiting)
+		status, uptime, err := computeGroupStatus(db, monitor, visiting)
+		if err != nil {
+			return MonitorStatusSnapshot{}, err
+		}
 		item.Status = status
 		item.Uptime24H = uptime
 		return item, nil
@@ -58,27 +62,35 @@ func computeMonitorStatus(db *gorm.DB, monitor model.Monitor, visiting map[uint]
 
 	item.Status = model.StatusDown
 	var beat model.Heartbeat
-	if db.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&beat).Error == nil {
+	if err := db.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&beat).Error; err == nil {
 		item.Status = beat.Status
 		if beat.PingMS != nil {
 			item.PingMS = *beat.PingMS
 		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return MonitorStatusSnapshot{}, err
 	}
-	item.Uptime24H = monitorUptime24H(db, monitor.ID)
+	uptime, err := monitorUptime24H(db, monitor.ID)
+	if err != nil {
+		return MonitorStatusSnapshot{}, err
+	}
+	item.Uptime24H = uptime
 	return item, nil
 }
 
-func computeGroupStatus(db *gorm.DB, group model.Monitor, visiting map[uint]bool) (uint16, float64) {
+func computeGroupStatus(db *gorm.DB, group model.Monitor, visiting map[uint]bool) (uint16, float64, error) {
 	if visiting[group.ID] {
-		return model.StatusPending, 1.0
+		return model.StatusPending, 1.0, nil
 	}
 	visiting[group.ID] = true
 	defer delete(visiting, group.ID)
 
 	var children []model.Monitor
-	db.Where("user_id = ? AND group_id = ?", group.UserID, group.ID).Find(&children)
+	if err := db.Where("user_id = ? AND group_id = ?", group.UserID, group.ID).Find(&children).Error; err != nil {
+		return model.StatusPending, 1.0, err
+	}
 	if len(children) == 0 {
-		return model.StatusPending, 1.0
+		return model.StatusPending, 1.0, nil
 	}
 
 	accumulator := groupStatusAccumulator{}
@@ -90,18 +102,23 @@ func computeGroupStatus(db *gorm.DB, group model.Monitor, visiting map[uint]bool
 		}
 		accumulator.addChild(childStatus)
 	}
-	return accumulator.result()
+	status, uptime := accumulator.result()
+	return status, uptime, nil
 }
 
-func monitorUptime24H(db *gorm.DB, monitorID uint) float64 {
+func monitorUptime24H(db *gorm.DB, monitorID uint) (float64, error) {
 	var up, down int64
 	cutoff := time.Now().Add(-24 * time.Hour)
-	db.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff, model.StatusUP).Count(&up)
-	db.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff, model.StatusDown).Count(&down)
-	if up+down > 0 {
-		return float64(up) / float64(up+down)
+	if err := db.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff, model.StatusUP).Count(&up).Error; err != nil {
+		return 1.0, err
 	}
-	return 1.0
+	if err := db.Model(&model.Heartbeat{}).Where("monitor_id = ? AND time > ? AND status = ?", monitorID, cutoff, model.StatusDown).Count(&down).Error; err != nil {
+		return 1.0, err
+	}
+	if up+down > 0 {
+		return float64(up) / float64(up+down), nil
+	}
+	return 1.0, nil
 }
 
 func GroupStatusMessage(status uint16) string {

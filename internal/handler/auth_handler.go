@@ -70,11 +70,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	var count int64
-	h.DB.Model(&model.User{}).Count(&count)
+	if err := h.DB.Model(&model.User{}).Count(&count).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "user_count_failed", err.Error())
+		return
+	}
 
 	var existing model.User
 	if err := h.DB.Where("username = ?", req.Username).First(&existing).Error; err == nil {
 		errorResponse(c, http.StatusConflict, "username_exists", "username already exists")
+		return
+	} else if !isRecordNotFound(err) {
+		errorResponse(c, http.StatusInternalServerError, "user_lookup_failed", err.Error())
 		return
 	}
 
@@ -115,7 +121,7 @@ func (h *AuthHandler) Profile(c *gin.Context) {
 
 	var user model.User
 	if err := h.DB.First(&user, userID).Error; err != nil {
-		errorResponse(c, http.StatusNotFound, "user_not_found", "user not found")
+		lookupErrorResponse(c, err, "user_not_found", "user not found", "user_lookup_failed")
 		return
 	}
 
@@ -124,7 +130,10 @@ func (h *AuthHandler) Profile(c *gin.Context) {
 
 func (h *AuthHandler) ListUsers(c *gin.Context) {
 	var users []model.User
-	h.DB.Find(&users)
+	if err := h.DB.Find(&users).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "user_list_failed", err.Error())
+		return
+	}
 
 	c.JSON(http.StatusOK, userListResponses(users))
 }
@@ -145,7 +154,7 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 
 	var target model.User
 	if err := h.DB.First(&target, userID).Error; err != nil {
-		errorResponse(c, http.StatusNotFound, "user_not_found", "user not found")
+		lookupErrorResponse(c, err, "user_not_found", "user not found", "user_lookup_failed")
 		return
 	}
 
@@ -155,7 +164,15 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	lastActiveAdmin := target.Role == model.RoleAdmin && h.isLastActiveAdmin(target.ID)
+	lastActiveAdmin := false
+	if target.Role == model.RoleAdmin {
+		var err error
+		lastActiveAdmin, err = h.isLastActiveAdmin(target.ID)
+		if err != nil {
+			errorResponse(c, http.StatusInternalServerError, "admin_count_failed", err.Error())
+			return
+		}
+	}
 	plan, validationErr := planUserUpdate(req, target, currentUserID, lastActiveAdmin)
 	if validationErr != nil {
 		badRequest(c, validationErr.code, validationErr.message)
@@ -181,11 +198,13 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "user updated"})
 }
 
-func (h *AuthHandler) isLastActiveAdmin(userID uint) bool {
+func (h *AuthHandler) isLastActiveAdmin(userID uint) (bool, error) {
 	var count int64
-	h.DB.Model(&model.User{}).
+	if err := h.DB.Model(&model.User{}).
 		Where("role = ? AND active = ?", model.RoleAdmin, true).
 		Where("id <> ?", userID).
-		Count(&count)
-	return count == 0
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count == 0, nil
 }

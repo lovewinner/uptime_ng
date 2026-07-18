@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"testing"
 
 	"uptime_ng/internal/model"
@@ -32,7 +33,9 @@ func TestRestartAndStopMonitors(t *testing.T) {
 	scheduler := &fakeScheduler{}
 	monitors := []model.Monitor{{ID: 3, Active: false}, {ID: 5, Active: false}}
 
-	restartMonitors(scheduler, monitors)
+	if err := restartMonitors(scheduler, monitors); err != nil {
+		t.Fatalf("restart monitors: %v", err)
+	}
 	stopMonitors(scheduler, monitors)
 
 	got := []schedulerCall{
@@ -48,5 +51,14 @@ func TestRestartAndStopMonitors(t *testing.T) {
 		if scheduler.calls[i] != got[i] {
 			t.Fatalf("calls=%+v want %+v", scheduler.calls, got)
 		}
+	}
+}
+
+func TestRestartMonitorsReturnsSchedulerErrors(t *testing.T) {
+	wantErr := errors.New("restart failed")
+	scheduler := &fakeScheduler{restartErr: wantErr}
+	err := restartMonitors(scheduler, []model.Monitor{{ID: 3, Active: false}})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error=%v want %v", err, wantErr)
 	}
 }

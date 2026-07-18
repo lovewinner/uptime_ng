@@ -197,11 +197,13 @@ func TestEnsureGroupPathReturnsLookupErrors(t *testing.T) {
 
 func TestSyncImportedMonitorSchedulers(t *testing.T) {
 	scheduler := &fakeScheduler{}
-	syncImportedMonitorSchedulers(scheduler, []model.Monitor{
+	if err := syncImportedMonitorSchedulers(scheduler, []model.Monitor{
 		{ID: 1, Type: model.MonitorTypeGroup, Active: true},
 		{ID: 2, Type: model.MonitorTypeHTTP, Active: true},
 		{ID: 3, Type: model.MonitorTypeTCP, Active: false},
-	})
+	}); err != nil {
+		t.Fatalf("sync schedulers: %v", err)
+	}
 
 	if len(scheduler.calls) != 3 {
 		t.Fatalf("calls=%+v", scheduler.calls)
@@ -215,5 +217,14 @@ func TestSyncImportedMonitorSchedulers(t *testing.T) {
 		if scheduler.calls[i].action != want[i].action || scheduler.calls[i].id != want[i].id {
 			t.Fatalf("call[%d]=%+v want %+v", i, scheduler.calls[i], want[i])
 		}
+	}
+}
+
+func TestSyncImportedMonitorSchedulersReturnsSchedulerErrors(t *testing.T) {
+	wantErr := errors.New("restart failed")
+	scheduler := &fakeScheduler{restartErr: wantErr}
+	err := syncImportedMonitorSchedulers(scheduler, []model.Monitor{{ID: 2, Type: model.MonitorTypeHTTP, Active: true}})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error=%v want %v", err, wantErr)
 	}
 }

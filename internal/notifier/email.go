@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net/smtp"
@@ -123,11 +124,20 @@ func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) 
 	}
 
 	var mnList []model.MonitorNotification
-	db.Where("monitor_id = ?", monitor.ID).Find(&mnList)
+	if err := db.Where("monitor_id = ?", monitor.ID).Find(&mnList).Error; err != nil {
+		log.Printf("[email] failed to query monitor notifications: %v", err)
+		return
+	}
 
 	for _, mn := range mnList {
 		var notif model.Notification
 		if err := db.First(&notif, mn.NotificationID).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Printf("[email] failed to query notification %d: %v", mn.NotificationID, err)
+			}
+			continue
+		}
+		if notif.UserID != monitor.UserID {
 			continue
 		}
 		if notif.Type != model.NotificationTypeEmail || !notif.Active {

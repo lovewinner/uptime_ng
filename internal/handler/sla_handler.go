@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -60,7 +61,7 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 
 	monitor, err := userMonitor(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
@@ -70,12 +71,18 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 		MonitorType: monitor.Type,
 	}
 
-	fillSLAFromHeartbeats(h.DB, &result, monitor.ID, periodStart, periodEnd)
+	if err := fillSLAFromHeartbeats(h.DB, &result, monitor.ID, periodStart, periodEnd); err != nil {
+		errorResponse(c, http.StatusInternalServerError, "sla_query_failed", err.Error())
+		return
+	}
 
 	var incCount int64
-	h.DB.Model(&model.Incident{}).
+	if err := h.DB.Model(&model.Incident{}).
 		Where("monitor_id = ? AND started_at >= ? AND started_at < ?", monitorID, periodStart, periodEnd).
-		Count(&incCount)
+		Count(&incCount).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "incident_count_failed", err.Error())
+		return
+	}
 	result.Incidents = uint32(incCount)
 
 	c.JSON(http.StatusOK, result)
@@ -87,7 +94,10 @@ func (h *SLAHandler) GetOverall(c *gin.Context) {
 	periodStart, periodEnd := periodRange(periodType, time.Now())
 
 	var monitors []model.Monitor
-	h.DB.Where("user_id = ?", userID).Find(&monitors)
+	if err := h.DB.Where("user_id = ?", userID).Find(&monitors).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_list_failed", err.Error())
+		return
+	}
 
 	results := make([]SLAResult, len(monitors))
 
@@ -97,24 +107,33 @@ func (h *SLAHandler) GetOverall(c *gin.Context) {
 			MonitorName: m.Name,
 			MonitorType: m.Type,
 		}
-		fillSLAFromHeartbeats(h.DB, &result, m.ID, periodStart, periodEnd)
+		if err := fillSLAFromHeartbeats(h.DB, &result, m.ID, periodStart, periodEnd); err != nil {
+			errorResponse(c, http.StatusInternalServerError, "sla_query_failed", err.Error())
+			return
+		}
 		var incCount int64
-		h.DB.Model(&model.Incident{}).
+		if err := h.DB.Model(&model.Incident{}).
 			Where("monitor_id = ? AND started_at >= ? AND started_at < ?", m.ID, periodStart, periodEnd).
-			Count(&incCount)
+			Count(&incCount).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "incident_count_failed", err.Error())
+			return
+		}
 		result.Incidents = uint32(incCount)
 		results[i] = result
 	}
 
 	if data, err := json.Marshal(results); err == nil {
-		h.DB.Create(&model.SLAReport{
+		if err := h.DB.Create(&model.SLAReport{
 			UserID:      userID,
 			PeriodType:  periodType,
 			PeriodStart: periodStart,
 			PeriodEnd:   periodEnd,
 			DataJSON:    string(data),
 			GeneratedAt: time.Now(),
-		})
+		}).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "sla_report_create_failed", err.Error())
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, results)
@@ -131,7 +150,7 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 	num := positiveIntParam(c.DefaultQuery("num", "30"), 30)
 
 	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
@@ -139,19 +158,28 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 	case "minutely":
 		var stats []model.StatMinutely
 		cutoff := timeNowUnix() - int64(num)*60
-		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats)
+		if err := h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "uptime_data_query_failed", err.Error())
+			return
+		}
 		c.JSON(http.StatusOK, minutelyDataPoints(stats))
 
 	case "hourly":
 		var stats []model.StatHourly
 		cutoff := timeNowUnix() - int64(num)*3600
-		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats)
+		if err := h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "uptime_data_query_failed", err.Error())
+			return
+		}
 		c.JSON(http.StatusOK, hourlyDataPoints(stats))
 
 	default:
 		var stats []model.StatDaily
 		cutoff := timeNowUnix() - int64(num)*86400
-		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats)
+		if err := h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats).Error; err != nil {
+			errorResponse(c, http.StatusInternalServerError, "uptime_data_query_failed", err.Error())
+			return
+		}
 		c.JSON(http.StatusOK, dailyDataPoints(stats))
 	}
 }
@@ -166,22 +194,31 @@ func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
 
 	monitor, err := userMonitor(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
 	var result uptimeSummary
 
 	sla24 := SLAResult{}
-	fillSLAFromHeartbeats(h.DB, &sla24, monitor.ID, time.Now().Add(-24*time.Hour), time.Now())
+	if err := fillSLAFromHeartbeats(h.DB, &sla24, monitor.ID, time.Now().Add(-24*time.Hour), time.Now()); err != nil {
+		errorResponse(c, http.StatusInternalServerError, "sla_query_failed", err.Error())
+		return
+	}
 	result.Uptime24H = uptime24HFromSLA(sla24)
 
 	var stats30D []model.StatDaily
-	h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, timeNowUnix()-30*86400).Find(&stats30D)
+	if err := h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, timeNowUnix()-30*86400).Find(&stats30D).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "uptime_summary_query_failed", err.Error())
+		return
+	}
 	result.Uptime30D = dailyStatsUptime(stats30D)
 
 	var stats1Y []model.StatDaily
-	h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, timeNowUnix()-365*86400).Find(&stats1Y)
+	if err := h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, timeNowUnix()-365*86400).Find(&stats1Y).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "uptime_summary_query_failed", err.Error())
+		return
+	}
 	result.Uptime1Y = dailyStatsUptime(stats1Y)
 
 	c.JSON(http.StatusOK, result)
@@ -215,9 +252,11 @@ func periodRange(period string, now time.Time) (time.Time, time.Time) {
 	}
 }
 
-func fillSLAFromHeartbeats(db *gorm.DB, result *SLAResult, monitorID uint, start, end time.Time) {
+func fillSLAFromHeartbeats(db *gorm.DB, result *SLAResult, monitorID uint, start, end time.Time) error {
 	var previous model.Heartbeat
-	db.Where("monitor_id = ? AND time < ?", monitorID, start).Order("time DESC").First(&previous)
+	if err := db.Where("monitor_id = ? AND time < ?", monitorID, start).Order("time DESC").First(&previous).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 
 	status := model.StatusUP
 	if previous.ID > 0 {
@@ -225,9 +264,11 @@ func fillSLAFromHeartbeats(db *gorm.DB, result *SLAResult, monitorID uint, start
 	}
 
 	var beats []model.Heartbeat
-	db.Where("monitor_id = ? AND time >= ? AND time < ?", monitorID, start, end).
+	if err := db.Where("monitor_id = ? AND time >= ? AND time < ?", monitorID, start, end).
 		Order("time ASC").
-		Find(&beats)
+		Find(&beats).Error; err != nil {
+		return err
+	}
 
 	last := start
 	var downtime time.Duration
@@ -269,6 +310,7 @@ func fillSLAFromHeartbeats(db *gorm.DB, result *SLAResult, monitorID uint, start
 		result.AvgPingMS = pingTotal / float64(pingCount)
 	}
 	result.TotalDowntimeSec = uint32(downtime.Seconds())
+	return nil
 }
 
 func timeNowUnix() int64 {

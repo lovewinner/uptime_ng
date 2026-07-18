@@ -7,30 +7,42 @@ import (
 	"uptime_ng/internal/model"
 )
 
-func monitorResponse(db *gorm.DB, monitor model.Monitor) gin.H {
+func monitorResponse(db *gorm.DB, monitor model.Monitor) (gin.H, error) {
+	tags, err := monitorTags(db, monitor.ID)
+	if err != nil {
+		return nil, err
+	}
+	notificationIDs, err := monitorNotificationIDs(db, monitor.ID)
+	if err != nil {
+		return nil, err
+	}
 	return gin.H{
 		"monitor":          monitor,
-		"tags":             monitorTags(db, monitor.ID),
-		"notification_ids": monitorNotificationIDs(db, monitor.ID),
-	}
+		"tags":             tags,
+		"notification_ids": notificationIDs,
+	}, nil
 }
 
-func monitorTags(db *gorm.DB, monitorID uint) []model.Tag {
+func monitorTags(db *gorm.DB, monitorID uint) ([]model.Tag, error) {
 	var tags []model.Tag
-	db.Raw(`
+	if err := db.Raw(`
 		SELECT t.* FROM tags t
 		JOIN monitor_tags mt ON mt.tag_id = t.id
 		WHERE mt.monitor_id = ?
-	`, monitorID).Scan(&tags)
-	return tags
+	`, monitorID).Scan(&tags).Error; err != nil {
+		return nil, err
+	}
+	return tags, nil
 }
 
-func monitorNotificationIDs(db *gorm.DB, monitorID uint) []uint {
+func monitorNotificationIDs(db *gorm.DB, monitorID uint) ([]uint, error) {
 	var notifs []model.MonitorNotification
-	db.Where("monitor_id = ?", monitorID).Find(&notifs)
+	if err := db.Where("monitor_id = ?", monitorID).Find(&notifs).Error; err != nil {
+		return nil, err
+	}
 	ids := make([]uint, len(notifs))
 	for i, notif := range notifs {
 		ids[i] = notif.NotificationID
 	}
-	return ids
+	return ids, nil
 }

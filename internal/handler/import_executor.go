@@ -98,17 +98,21 @@ func importMonitor(tx *gorm.DB, userID uint, exported ExportMonitor, strategy st
 	return importMonitorOutcome{action: importMonitorCreated, monitor: monitor}, nil
 }
 
-func syncImportedMonitorSchedulers(scheduler MonitorScheduler, monitors []model.Monitor) {
+func syncImportedMonitorSchedulers(scheduler MonitorScheduler, monitors []model.Monitor) error {
 	if scheduler == nil {
-		return
+		return nil
 	}
+	var errs []error
 	for i := range monitors {
 		if monitors[i].Type == model.MonitorTypeGroup {
 			scheduler.StopMonitor(monitors[i].ID)
 		} else if monitors[i].Active {
-			scheduler.RestartMonitor(&monitors[i])
+			if err := scheduler.RestartMonitor(&monitors[i]); err != nil {
+				errs = append(errs, err)
+			}
 		} else {
 			scheduler.StopMonitor(monitors[i].ID)
 		}
 	}
+	return errors.Join(errs...)
 }

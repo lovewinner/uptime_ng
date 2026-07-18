@@ -15,9 +15,9 @@ type MonitorHandler struct {
 }
 
 type MonitorScheduler interface {
-	StartMonitor(monitor *model.Monitor)
+	StartMonitor(monitor *model.Monitor) error
 	StopMonitor(monitorID uint)
-	RestartMonitor(monitor *model.Monitor)
+	RestartMonitor(monitor *model.Monitor) error
 }
 
 func NewMonitorHandler(db *gorm.DB, scheduler MonitorScheduler) *MonitorHandler {
@@ -88,8 +88,11 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 	normalizeMonitorRequest(&req)
-	if err := h.validateMonitorRequest(userID, 0, req); err != nil {
-		badRequest(c, err.code, err.message)
+	if validationErr, lookupErr := h.validateMonitorRequest(userID, 0, req); lookupErr != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_validation_failed", lookupErr.Error())
+		return
+	} else if validationErr != nil {
+		badRequest(c, validationErr.code, validationErr.message)
 		return
 	}
 
@@ -106,7 +109,10 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 	}
 
 	if monitor.Active && h.Scheduler != nil {
-		h.Scheduler.StartMonitor(&monitor)
+		if err := h.Scheduler.StartMonitor(&monitor); err != nil {
+			errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_start_failed", err.Error())
+			return
+		}
 	}
 
 	c.JSON(http.StatusCreated, monitor)
@@ -116,12 +122,20 @@ func (h *MonitorHandler) List(c *gin.Context) {
 	userID := c.GetUint("user_id")
 
 	var monitors []model.Monitor
-	h.DB.Where("user_id = ?", userID).Order("created_at DESC").Find(&monitors)
+	if err := h.DB.Where("user_id = ?", userID).Order("created_at DESC").Find(&monitors).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_list_failed", err.Error())
+		return
+	}
 
 	results := make([]gin.H, len(monitors))
 
 	for i, m := range monitors {
-		results[i] = monitorResponse(h.DB, m)
+		response, err := monitorResponse(h.DB, m)
+		if err != nil {
+			errorResponse(c, http.StatusInternalServerError, "monitor_response_failed", err.Error())
+			return
+		}
+		results[i] = response
 	}
 
 	c.JSON(http.StatusOK, results)
@@ -137,11 +151,16 @@ func (h *MonitorHandler) Get(c *gin.Context) {
 
 	monitor, err := userMonitor(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
-	c.JSON(http.StatusOK, monitorResponse(h.DB, monitor))
+	response, err := monitorResponse(h.DB, monitor)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_response_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *MonitorHandler) Update(c *gin.Context) {
@@ -154,7 +173,7 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 
 	monitor, err := userMonitor(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
@@ -164,8 +183,11 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 		return
 	}
 	normalizeMonitorRequest(&req)
-	if err := h.validateMonitorRequest(userID, monitor.ID, req); err != nil {
-		badRequest(c, err.code, err.message)
+	if validationErr, lookupErr := h.validateMonitorRequest(userID, monitor.ID, req); lookupErr != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_validation_failed", lookupErr.Error())
+		return
+	} else if validationErr != nil {
+		badRequest(c, validationErr.code, validationErr.message)
 		return
 	}
 
@@ -189,7 +211,10 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 
 	if h.Scheduler != nil {
 		if monitor.Active {
-			h.Scheduler.RestartMonitor(&monitor)
+			if err := h.Scheduler.RestartMonitor(&monitor); err != nil {
+				errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_restart_failed", err.Error())
+				return
+			}
 		} else {
 			h.Scheduler.StopMonitor(monitor.ID)
 		}
@@ -208,7 +233,7 @@ func (h *MonitorHandler) Delete(c *gin.Context) {
 
 	monitor, err := userMonitor(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
@@ -236,16 +261,23 @@ func (h *MonitorHandler) Resume(c *gin.Context) {
 
 	monitor, err := userMonitor(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
-	monitors := h.monitorActivationTargets(userID, monitor)
+	monitors, err := h.monitorActivationTargets(userID, monitor)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_descendants_failed", err.Error())
+		return
+	}
 	ids := monitorIDs(monitors)
 	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", true).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_resume_failed", err.Error())
 		return
 	}
-	restartMonitors(h.Scheduler, monitors)
+	if err := restartMonitors(h.Scheduler, monitors); err != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_scheduler_restart_failed", err.Error())
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "monitor resumed"})
 }
 
@@ -259,10 +291,14 @@ func (h *MonitorHandler) Pause(c *gin.Context) {
 
 	monitor, err := userMonitor(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
-	monitors := h.monitorActivationTargets(userID, monitor)
+	monitors, err := h.monitorActivationTargets(userID, monitor)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "monitor_descendants_failed", err.Error())
+		return
+	}
 	ids := monitorIDs(monitors)
 	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", false).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_pause_failed", err.Error())
@@ -272,25 +308,32 @@ func (h *MonitorHandler) Pause(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "monitor paused"})
 }
 
-func (h *MonitorHandler) validateMonitorRequest(userID uint, monitorID uint, req CreateMonitorRequest) *requestValidationError {
+func (h *MonitorHandler) validateMonitorRequest(userID uint, monitorID uint, req CreateMonitorRequest) (*requestValidationError, error) {
 	if !isValidMonitorType(req.Type) {
-		return &requestValidationError{code: "invalid_monitor_type", message: "type must be http, tcp, ping, dns, push or group"}
+		return &requestValidationError{code: "invalid_monitor_type", message: "type must be http, tcp, ping, dns, push or group"}, nil
 	}
 	if req.GroupID == nil {
-		return nil
+		return nil, nil
 	}
 	if monitorID != 0 && *req.GroupID == monitorID {
-		return &requestValidationError{code: "invalid_group", message: "monitor cannot be its own group"}
+		return &requestValidationError{code: "invalid_group", message: "monitor cannot be its own group"}, nil
 	}
 
 	parent, err := userGroupMonitor(h.DB, userID, *req.GroupID)
 	if err != nil {
-		return &requestValidationError{code: "invalid_group", message: "group_id must reference a group monitor owned by the current user"}
+		if !isRecordNotFound(err) {
+			return nil, err
+		}
+		return &requestValidationError{code: "invalid_group", message: "group_id must reference a group monitor owned by the current user"}, nil
 	}
-	if monitorID != 0 && wouldCreateGroupCycle(h.DB, userID, monitorID, parent.ID) {
-		return &requestValidationError{code: "group_cycle", message: "group hierarchy cannot contain cycles"}
+	cycle, err := wouldCreateGroupCycle(h.DB, userID, monitorID, parent.ID)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	if monitorID != 0 && cycle {
+		return &requestValidationError{code: "group_cycle", message: "group hierarchy cannot contain cycles"}, nil
+	}
+	return nil, nil
 }
 
 func isValidMonitorType(monitorType string) bool {
@@ -302,15 +345,21 @@ func isValidMonitorType(monitorType string) bool {
 	}
 }
 
-func (h *MonitorHandler) descendantMonitors(userID uint, groupID uint) []model.Monitor {
+func (h *MonitorHandler) descendantMonitors(userID uint, groupID uint) ([]model.Monitor, error) {
 	var children []model.Monitor
-	h.DB.Where("user_id = ? AND group_id = ?", userID, groupID).Find(&children)
+	if err := h.DB.Where("user_id = ? AND group_id = ?", userID, groupID).Find(&children).Error; err != nil {
+		return nil, err
+	}
 	results := make([]model.Monitor, 0, len(children))
 	for _, child := range children {
 		results = append(results, child)
 		if child.Type == model.MonitorTypeGroup {
-			results = append(results, h.descendantMonitors(userID, child.ID)...)
+			descendants, err := h.descendantMonitors(userID, child.ID)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, descendants...)
 		}
 	}
-	return results
+	return results, nil
 }

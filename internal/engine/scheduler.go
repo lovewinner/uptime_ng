@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -15,28 +16,34 @@ type HeartbeatPublisher interface {
 }
 
 type Scheduler struct {
-	DB        *gorm.DB
-	publisher HeartbeatPublisher
-	monitors  map[uint]*MonitorRunner
-	mu        sync.RWMutex
-	running   bool
+	DB              *gorm.DB
+	publisher       HeartbeatPublisher
+	checkerProvider func(string) Checker
+	monitors        map[uint]*MonitorRunner
+	mu              sync.RWMutex
+	running         bool
 }
 
+var errSchedulerStopped = errors.New("scheduler stopped")
+
 type MonitorRunner struct {
-	Monitor    *model.Monitor
-	Ticker     *time.Ticker
-	StopChan   chan struct{}
-	Calculator *UptimeCalculator
-	DB         *gorm.DB
-	Publisher  HeartbeatPublisher
+	Monitor         *model.Monitor
+	Ticker          *time.Ticker
+	StopChan        chan struct{}
+	DoneChan        chan struct{}
+	Calculator      *UptimeCalculator
+	DB              *gorm.DB
+	Publisher       HeartbeatPublisher
+	CheckerProvider func(string) Checker
 }
 
 func NewScheduler(db *gorm.DB, publisher HeartbeatPublisher) *Scheduler {
 	return &Scheduler{
-		DB:        db,
-		publisher: publisher,
-		monitors:  make(map[uint]*MonitorRunner),
-		running:   true,
+		DB:              db,
+		publisher:       publisher,
+		checkerProvider: GetChecker,
+		monitors:        make(map[uint]*MonitorRunner),
+		running:         true,
 	}
 }
 
@@ -48,19 +55,53 @@ func (s *Scheduler) StartAll() error {
 
 	log.Printf("Scheduler starting %d monitors", len(monitors))
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	prepared := make([]*MonitorRunner, 0, len(monitors))
 	for i := range monitors {
-		s.StartMonitor(&monitors[i])
+		runner, err := s.prepareRunner(&monitors[i])
+		if err != nil {
+			cleanupPreparedRunners(prepared)
+			return err
+		}
+		if runner != nil {
+			prepared = append(prepared, runner)
+		}
+	}
+	for _, runner := range prepared {
+		s.startRunnerLocked(runner)
 	}
 
 	return nil
 }
 
-func (s *Scheduler) StartMonitor(monitor *model.Monitor) {
+func (s *Scheduler) StartMonitor(monitor *model.Monitor) error {
+	_, err := s.startMonitor(monitor)
+	return err
+}
+
+func (s *Scheduler) startMonitor(monitor *model.Monitor) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	runner, err := s.prepareRunner(monitor)
+	if err != nil || runner == nil {
+		return false, err
+	}
+	s.startRunnerLocked(runner)
+	return true, nil
+}
+
+func (s *Scheduler) prepareRunner(monitor *model.Monitor) (*MonitorRunner, error) {
+	if !s.running {
+		return nil, errSchedulerStopped
+	}
 	if _, exists := s.monitors[monitor.ID]; exists {
-		return
+		return nil, nil
+	}
+	if monitor.Type == model.MonitorTypePush {
+		return nil, nil
 	}
 
 	interval := monitor.Interval
@@ -70,25 +111,43 @@ func (s *Scheduler) StartMonitor(monitor *model.Monitor) {
 
 	calc := NewUptimeCalculator(monitor.ID, s.DB)
 	if err := calc.Init(); err != nil {
-		log.Printf("Failed to init uptime calc for monitor %d: %v", monitor.ID, err)
+		return nil, err
 	}
 
-	runner := &MonitorRunner{
-		Monitor:    monitor,
-		Ticker:     time.NewTicker(time.Duration(interval) * time.Second),
-		StopChan:   make(chan struct{}),
-		Calculator: calc,
-		DB:         s.DB,
-		Publisher:  s.publisher,
-	}
+	return &MonitorRunner{
+		Monitor:         monitor,
+		Ticker:          time.NewTicker(time.Duration(interval) * time.Second),
+		StopChan:        make(chan struct{}),
+		DoneChan:        make(chan struct{}),
+		Calculator:      calc,
+		DB:              s.DB,
+		Publisher:       s.publisher,
+		CheckerProvider: s.checkerProvider,
+	}, nil
+}
 
-	s.monitors[monitor.ID] = runner
+func (s *Scheduler) startRunnerLocked(runner *MonitorRunner) {
+	s.monitors[runner.Monitor.ID] = runner
 
 	go func() {
 		runner.run()
 	}()
 
-	log.Printf("Started monitor: %s (id=%d, interval=%ds)", monitor.Name, monitor.ID, interval)
+	log.Printf("Started monitor: %s (id=%d, interval=%ds)", runner.Monitor.Name, runner.Monitor.ID, intervalFromMonitor(runner.Monitor))
+}
+
+func cleanupPreparedRunners(runners []*MonitorRunner) {
+	for _, runner := range runners {
+		runner.Ticker.Stop()
+	}
+}
+
+func intervalFromMonitor(monitor *model.Monitor) uint32 {
+	interval := monitor.Interval
+	if interval < model.MinInterval {
+		return model.DefaultInterval
+	}
+	return interval
 }
 
 func (s *Scheduler) StopMonitor(monitorID uint) {
@@ -100,9 +159,8 @@ func (s *Scheduler) StopMonitor(monitorID uint) {
 		return
 	}
 
-	close(runner.StopChan)
-	runner.Ticker.Stop()
 	delete(s.monitors, monitorID)
+	stopRunner(runner)
 }
 
 func (s *Scheduler) StopAll() {
@@ -111,16 +169,14 @@ func (s *Scheduler) StopAll() {
 
 	s.running = false
 	for id, runner := range s.monitors {
-		close(runner.StopChan)
-		runner.Ticker.Stop()
 		delete(s.monitors, id)
+		stopRunner(runner)
 	}
 }
 
-func (s *Scheduler) RestartMonitor(monitor *model.Monitor) {
+func (s *Scheduler) RestartMonitor(monitor *model.Monitor) error {
 	s.StopMonitor(monitor.ID)
-	time.Sleep(100 * time.Millisecond)
-	s.StartMonitor(monitor)
+	return s.StartMonitor(monitor)
 }
 
 func (s *Scheduler) RunningCount() int {
@@ -130,6 +186,7 @@ func (s *Scheduler) RunningCount() int {
 }
 
 func (r *MonitorRunner) run() {
+	defer close(r.DoneChan)
 	if r.Monitor.Type == model.MonitorTypePush {
 		return
 	}
@@ -148,6 +205,12 @@ func (r *MonitorRunner) run() {
 	}
 }
 
+func stopRunner(runner *MonitorRunner) {
+	close(runner.StopChan)
+	runner.Ticker.Stop()
+	<-runner.DoneChan
+}
+
 func (r *MonitorRunner) beat() {
 	monitor := r.Monitor
 	if window, ok := r.activeMaintenanceWindow(monitor, time.Now()); ok {
@@ -158,7 +221,11 @@ func (r *MonitorRunner) beat() {
 		r.groupBeat()
 		return
 	}
-	checker := GetChecker(monitor.Type)
+	checkerProvider := r.CheckerProvider
+	if checkerProvider == nil {
+		checkerProvider = GetChecker
+	}
+	checker := checkerProvider(monitor.Type)
 	if checker == nil {
 		log.Printf("Unknown monitor type: %s for monitor %d", monitor.Type, monitor.ID)
 		return
@@ -174,7 +241,9 @@ func (r *MonitorRunner) beat() {
 		result.Status = model.FlipStatus(result.Status)
 	}
 	if monitor.Type == model.MonitorTypeDNS {
-		r.DB.Model(&model.Monitor{}).Where("id = ?", monitor.ID).Update("dns_last_result", result.Msg)
+		if err := r.DB.Model(&model.Monitor{}).Where("id = ?", monitor.ID).Update("dns_last_result", result.Msg).Error; err != nil {
+			log.Printf("Failed to update DNS result for monitor %s: %v", monitor.Name, err)
+		}
 		monitor.DNSLastResult = result.Msg
 	}
 
@@ -190,7 +259,10 @@ func (r *MonitorRunner) beat() {
 	}
 
 	var previousBeat model.Heartbeat
-	r.DB.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&previousBeat)
+	if err := r.DB.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&previousBeat).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("Failed to query previous heartbeat for monitor %s: %v", monitor.Name, err)
+		return
+	}
 
 	transition := applyCheckHeartbeatState(&beat, previousBeat, monitor, result)
 	if beat.Important {
@@ -212,6 +284,9 @@ func (r *MonitorRunner) activeMaintenanceWindow(monitor *model.Monitor, now time
 		Where("monitor_id IS NULL OR monitor_id = ?", monitor.ID).
 		Order("monitor_id DESC, start_at DESC").
 		First(&window).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("Failed to query maintenance window for monitor %s: %v", monitor.Name, err)
+	}
 	return window, err == nil
 }
 
@@ -223,7 +298,6 @@ func (r *MonitorRunner) maintenanceBeat(window model.MaintenanceWindow) {
 		Msg:       "maintenance window: " + window.Name,
 		Time:      now,
 	}
-	r.Calculator.Update(beat.Status, nil, now)
 	r.persistAndPublishHeartbeat(beat, now)
 }
 
@@ -244,7 +318,10 @@ func (r *MonitorRunner) groupBeat() {
 	}
 
 	var previousBeat model.Heartbeat
-	r.DB.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&previousBeat)
+	if err := r.DB.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&previousBeat).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("Failed to query previous group heartbeat for monitor %s: %v", monitor.Name, err)
+		return
+	}
 
 	transition := applyGroupHeartbeatState(&beat, previousBeat)
 	if beat.Important {
@@ -255,8 +332,14 @@ func (r *MonitorRunner) groupBeat() {
 }
 
 func (r *MonitorRunner) persistAndPublishHeartbeat(beat model.Heartbeat, now time.Time) {
-	r.Calculator.Update(beat.Status, beat.PingMS, now)
-	r.DB.Create(&beat)
+	if err := r.Calculator.Update(beat.Status, beat.PingMS, now); err != nil {
+		log.Printf("Failed to update uptime stats for monitor %s: %v", r.Monitor.Name, err)
+		return
+	}
+	if err := r.DB.Create(&beat).Error; err != nil {
+		log.Printf("Failed to persist heartbeat for monitor %s: %v", r.Monitor.Name, err)
+		return
+	}
 	if r.Publisher != nil {
 		r.Publisher.SendToUser(r.Monitor.UserID, "heartbeat", beat)
 	}
@@ -267,16 +350,24 @@ func (r *MonitorRunner) shouldResendDownNotification(now time.Time, resendInterv
 	err := r.DB.Where("monitor_id = ? AND important = ? AND status = ?", r.Monitor.ID, true, model.StatusDown).
 		Order("time DESC").
 		First(&lastImportant).Error
-	if err != nil || lastImportant.ID == 0 {
+	if errors.Is(err, gorm.ErrRecordNotFound) || lastImportant.ID == 0 {
 		return true
+	}
+	if err != nil {
+		log.Printf("Failed to query last important heartbeat for monitor %s: %v", r.Monitor.Name, err)
+		return false
 	}
 	return now.Sub(lastImportant.Time) >= time.Duration(resendInterval)*time.Second
 }
 
 func (r *MonitorRunner) sendNotification(isFirstBeat bool, prevStatus uint16, beat model.Heartbeat) {
 	dispatch := NewNotifyDispatch(r.DB)
-	dispatch.Send(r.Monitor, beat, isFirstBeat, prevStatus)
-	dispatch.markIncident(r.DB, r.Monitor.ID, r.Monitor.Name, prevStatus, beat.Status, beat.Msg)
+	if err := dispatch.Send(r.Monitor, beat, isFirstBeat, prevStatus); err != nil {
+		log.Printf("Failed to dispatch notification for monitor %s: %v", r.Monitor.Name, err)
+	}
+	if err := dispatch.markIncident(r.DB, r.Monitor.ID, r.Monitor.Name, prevStatus, beat.Status, beat.Msg); err != nil {
+		log.Printf("Failed to update incident for monitor %s: %v", r.Monitor.Name, err)
+	}
 }
 
 func isImportantBeat(isFirstBeat bool, prevStatus, newStatus uint16) bool {

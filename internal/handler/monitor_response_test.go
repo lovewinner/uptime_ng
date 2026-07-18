@@ -23,7 +23,10 @@ func TestMonitorResponseIncludesAssociations(t *testing.T) {
 	db.Create(&model.MonitorTag{MonitorID: monitor.ID, TagID: tag.ID, Value: tag.Name})
 	db.Create(&model.MonitorNotification{MonitorID: monitor.ID, NotificationID: notif.ID})
 
-	resp := monitorResponse(db, monitor)
+	resp, err := monitorResponse(db, monitor)
+	if err != nil {
+		t.Fatalf("monitor response: %v", err)
+	}
 
 	tags, ok := resp["tags"].([]model.Tag)
 	if !ok || len(tags) != 1 || tags[0].Name != "prod" {
@@ -32,5 +35,20 @@ func TestMonitorResponseIncludesAssociations(t *testing.T) {
 	ids, ok := resp["notification_ids"].([]uint)
 	if !ok || len(ids) != 1 || ids[0] != notif.ID {
 		t.Fatalf("notification_ids=%+v", resp["notification_ids"])
+	}
+}
+
+func TestMonitorResponseReturnsAssociationErrors(t *testing.T) {
+	db := testDB(t)
+	monitor := model.Monitor{UserID: 1, Name: "site", Type: model.MonitorTypeHTTP}
+	if err := db.Create(&monitor).Error; err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+	if err := db.Migrator().DropTable(&model.MonitorTag{}); err != nil {
+		t.Fatalf("drop monitor_tags: %v", err)
+	}
+
+	if _, err := monitorResponse(db, monitor); err == nil {
+		t.Fatal("expected monitor response error")
 	}
 }

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -12,6 +13,7 @@ import (
 type UptimeCalculator struct {
 	MonitorID uint
 	DB        *gorm.DB
+	mu        sync.RWMutex
 
 	MinutelyData map[int64]*AggregateBucket
 	HourlyData   map[int64]*AggregateBucket
@@ -38,28 +40,37 @@ func NewUptimeCalculator(monitorID uint, db *gorm.DB) *UptimeCalculator {
 }
 
 func (u *UptimeCalculator) Init() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	now := time.Now()
 
 	var minutelyBeans []model.StatMinutely
 	cutoff := now.Add(-24 * time.Hour)
-	u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
-		Order("timestamp").Find(&minutelyBeans)
+	if err := u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
+		Order("timestamp").Find(&minutelyBeans).Error; err != nil {
+		return err
+	}
 	for _, b := range minutelyBeans {
 		u.MinutelyData[b.Timestamp] = bucketFromStats(b.Up, b.Down, b.AvgPing, b.MinPing, b.MaxPing)
 	}
 
 	var hourlyBeans []model.StatHourly
 	cutoff = now.Add(-30 * 24 * time.Hour)
-	u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
-		Order("timestamp").Find(&hourlyBeans)
+	if err := u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
+		Order("timestamp").Find(&hourlyBeans).Error; err != nil {
+		return err
+	}
 	for _, b := range hourlyBeans {
 		u.HourlyData[b.Timestamp] = bucketFromStats(b.Up, b.Down, b.AvgPing, b.MinPing, b.MaxPing)
 	}
 
 	var dailyBeans []model.StatDaily
 	cutoff = now.Add(-365 * 24 * time.Hour)
-	u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
-		Order("timestamp").Find(&dailyBeans)
+	if err := u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
+		Order("timestamp").Find(&dailyBeans).Error; err != nil {
+		return err
+	}
 	for _, b := range dailyBeans {
 		u.DailyData[b.Timestamp] = bucketFromStats(b.Up, b.Down, b.AvgPing, b.MinPing, b.MaxPing)
 	}
@@ -67,31 +78,46 @@ func (u *UptimeCalculator) Init() error {
 	return nil
 }
 
-func (u *UptimeCalculator) Update(status uint16, pingMS *float64, date time.Time) {
+func (u *UptimeCalculator) Update(status uint16, pingMS *float64, date time.Time) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	minutelyKey := u.minutelyKey(date)
 	hourlyKey := u.hourlyKey(date)
 	dailyKey := u.dailyKey(date)
 
-	minutely := u.getOrCreate(u.MinutelyData, minutelyKey)
-	hourly := u.getOrCreate(u.HourlyData, hourlyKey)
-	daily := u.getOrCreate(u.DailyData, dailyKey)
+	minutely := cloneBucket(u.MinutelyData[minutelyKey])
+	hourly := cloneBucket(u.HourlyData[hourlyKey])
+	daily := cloneBucket(u.DailyData[dailyKey])
 
 	applyBucketUpdate(minutely, status, pingMS)
 	applyBucketUpdate(hourly, status, pingMS)
 	applyBucketUpdate(daily, status, pingMS)
 
-	u.persistMinutelyBucket(minutelyKey, minutely)
-	u.persistHourlyBucket(hourlyKey, hourly)
-	u.persistDailyBucket(dailyKey, daily)
+	if err := u.DB.Transaction(func(tx *gorm.DB) error {
+		if err := u.persistMinutelyBucket(tx, minutelyKey, minutely); err != nil {
+			return err
+		}
+		if err := u.persistHourlyBucket(tx, hourlyKey, hourly); err != nil {
+			return err
+		}
+		return u.persistDailyBucket(tx, dailyKey, daily)
+	}); err != nil {
+		return err
+	}
+
+	u.MinutelyData[minutelyKey] = minutely
+	u.HourlyData[hourlyKey] = hourly
+	u.DailyData[dailyKey] = daily
+	return nil
 }
 
-func (u *UptimeCalculator) getOrCreate(data map[int64]*AggregateBucket, key int64) *AggregateBucket {
-	if bucket, ok := data[key]; ok {
-		return bucket
+func cloneBucket(bucket *AggregateBucket) *AggregateBucket {
+	if bucket == nil {
+		return &AggregateBucket{}
 	}
-	bucket := &AggregateBucket{}
-	data[key] = bucket
-	return bucket
+	cloned := *bucket
+	return &cloned
 }
 
 func statUpsert() clause.OnConflict {
@@ -101,8 +127,8 @@ func statUpsert() clause.OnConflict {
 	}
 }
 
-func (u *UptimeCalculator) persistMinutelyBucket(key int64, bucket *AggregateBucket) {
-	u.DB.Clauses(statUpsert()).Create(&model.StatMinutely{
+func (u *UptimeCalculator) persistMinutelyBucket(db *gorm.DB, key int64, bucket *AggregateBucket) error {
+	return db.Clauses(statUpsert()).Create(&model.StatMinutely{
 		MonitorID: u.MonitorID,
 		Timestamp: key,
 		Up:        bucket.Up,
@@ -110,11 +136,11 @@ func (u *UptimeCalculator) persistMinutelyBucket(key int64, bucket *AggregateBuc
 		AvgPing:   bucket.AvgPing,
 		MinPing:   bucket.MinPing,
 		MaxPing:   bucket.MaxPing,
-	})
+	}).Error
 }
 
-func (u *UptimeCalculator) persistHourlyBucket(key int64, bucket *AggregateBucket) {
-	u.DB.Clauses(statUpsert()).Create(&model.StatHourly{
+func (u *UptimeCalculator) persistHourlyBucket(db *gorm.DB, key int64, bucket *AggregateBucket) error {
+	return db.Clauses(statUpsert()).Create(&model.StatHourly{
 		MonitorID: u.MonitorID,
 		Timestamp: key,
 		Up:        bucket.Up,
@@ -122,11 +148,11 @@ func (u *UptimeCalculator) persistHourlyBucket(key int64, bucket *AggregateBucke
 		AvgPing:   bucket.AvgPing,
 		MinPing:   bucket.MinPing,
 		MaxPing:   bucket.MaxPing,
-	})
+	}).Error
 }
 
-func (u *UptimeCalculator) persistDailyBucket(key int64, bucket *AggregateBucket) {
-	u.DB.Clauses(statUpsert()).Create(&model.StatDaily{
+func (u *UptimeCalculator) persistDailyBucket(db *gorm.DB, key int64, bucket *AggregateBucket) error {
+	return db.Clauses(statUpsert()).Create(&model.StatDaily{
 		MonitorID: u.MonitorID,
 		Timestamp: key,
 		Up:        bucket.Up,
@@ -134,7 +160,7 @@ func (u *UptimeCalculator) persistDailyBucket(key int64, bucket *AggregateBucket
 		AvgPing:   bucket.AvgPing,
 		MinPing:   bucket.MinPing,
 		MaxPing:   bucket.MaxPing,
-	})
+	}).Error
 }
 
 func (u *UptimeCalculator) minutelyKey(date time.Time) int64 {
@@ -162,6 +188,9 @@ func (u *UptimeCalculator) Get1YearUptime() float64 {
 }
 
 func (u *UptimeCalculator) GetDataPoints(granularity string, num int) []DataPoint {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
 	now := time.Now()
 	var points []DataPoint
 	step := int64(0)
@@ -211,6 +240,13 @@ type DataPoint struct {
 }
 
 func (u *UptimeCalculator) getUptimeByType(typ string, num int) float64 {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
+	return u.getUptimeByTypeLocked(typ, num)
+}
+
+func (u *UptimeCalculator) getUptimeByTypeLocked(typ string, num int) float64 {
 	var totalUP, totalDown uint32
 
 	switch typ {
@@ -235,12 +271,17 @@ func (u *UptimeCalculator) getUptimeByType(typ string, num int) float64 {
 	return uptimeFromCounts(totalUP, totalDown)
 }
 
-func (u *UptimeCalculator) CleanupOldData() {
+func (u *UptimeCalculator) CleanupOldData() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	now := time.Now()
 
 	minutelyCutoff := now.Add(-24 * time.Hour).Unix()
-	u.DB.Where("monitor_id = ? AND timestamp < ?", u.MonitorID, minutelyCutoff).
-		Delete(&model.StatMinutely{})
+	if err := u.DB.Where("monitor_id = ? AND timestamp < ?", u.MonitorID, minutelyCutoff).
+		Delete(&model.StatMinutely{}).Error; err != nil {
+		return err
+	}
 	for k := range u.MinutelyData {
 		if k < minutelyCutoff {
 			delete(u.MinutelyData, k)
@@ -248,8 +289,10 @@ func (u *UptimeCalculator) CleanupOldData() {
 	}
 
 	hourlyCutoff := now.Add(-30 * 24 * time.Hour).Unix()
-	u.DB.Where("monitor_id = ? AND timestamp < ?", u.MonitorID, hourlyCutoff).
-		Delete(&model.StatHourly{})
+	if err := u.DB.Where("monitor_id = ? AND timestamp < ?", u.MonitorID, hourlyCutoff).
+		Delete(&model.StatHourly{}).Error; err != nil {
+		return err
+	}
 	for k := range u.HourlyData {
 		if k < hourlyCutoff {
 			delete(u.HourlyData, k)
@@ -257,13 +300,16 @@ func (u *UptimeCalculator) CleanupOldData() {
 	}
 
 	dailyCutoff := now.Add(-365 * 24 * time.Hour).Unix()
-	u.DB.Where("monitor_id = ? AND timestamp < ?", u.MonitorID, dailyCutoff).
-		Delete(&model.StatDaily{})
+	if err := u.DB.Where("monitor_id = ? AND timestamp < ?", u.MonitorID, dailyCutoff).
+		Delete(&model.StatDaily{}).Error; err != nil {
+		return err
+	}
 	for k := range u.DailyData {
 		if k < dailyCutoff {
 			delete(u.DailyData, k)
 		}
 	}
+	return nil
 }
 
 type UptimeResult struct {

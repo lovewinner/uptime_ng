@@ -51,7 +51,10 @@ func (h *NotificationHandler) List(c *gin.Context) {
 	userID := c.GetUint("user_id")
 
 	var notifs []model.Notification
-	h.DB.Where("user_id = ?", userID).Order("created_at DESC").Find(&notifs)
+	if err := h.DB.Where("user_id = ?", userID).Order("created_at DESC").Find(&notifs).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "notification_list_failed", err.Error())
+		return
+	}
 
 	c.JSON(http.StatusOK, notifs)
 }
@@ -66,7 +69,7 @@ func (h *NotificationHandler) Get(c *gin.Context) {
 
 	notif, err := userNotification(h.DB, userID, id)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
+		lookupErrorResponse(c, err, "notification_not_found", "notification not found", "notification_lookup_failed")
 		return
 	}
 
@@ -83,7 +86,7 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 
 	notif, err := userNotification(h.DB, userID, id)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
+		lookupErrorResponse(c, err, "notification_not_found", "notification not found", "notification_lookup_failed")
 		return
 	}
 
@@ -115,16 +118,16 @@ func (h *NotificationHandler) Delete(c *gin.Context) {
 
 	notif, err := userNotification(h.DB, userID, id)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
+		lookupErrorResponse(c, err, "notification_not_found", "notification not found", "notification_lookup_failed")
 		return
 	}
-	if err := h.DB.Delete(&notif).Error; err != nil {
+	if err := runTransaction(h.DB, func(tx *gorm.DB) error {
+		if err := tx.Delete(&notif).Error; err != nil {
+			return err
+		}
+		return tx.Where("notification_id = ?", id).Delete(&model.MonitorNotification{}).Error
+	}); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "notification_delete_failed", err.Error())
-		return
-	}
-
-	if err := h.DB.Where("notification_id = ?", id).Delete(&model.MonitorNotification{}).Error; err != nil {
-		errorResponse(c, http.StatusInternalServerError, "notification_association_delete_failed", err.Error())
 		return
 	}
 
@@ -141,7 +144,7 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 
 	notif, err := userNotification(h.DB, userID, id)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "notification_not_found", "notification not found")
+		lookupErrorResponse(c, err, "notification_not_found", "notification not found", "notification_lookup_failed")
 		return
 	}
 

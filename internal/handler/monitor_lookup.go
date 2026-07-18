@@ -24,25 +24,28 @@ func userMonitorParentID(db *gorm.DB, userID uint, monitorID uint) (*uint, error
 	return monitor.GroupID, err
 }
 
-func wouldCreateGroupCycle(db *gorm.DB, userID uint, monitorID uint, parentID uint) bool {
+func wouldCreateGroupCycle(db *gorm.DB, userID uint, monitorID uint, parentID uint) (bool, error) {
 	seen := map[uint]bool{}
 	current := parentID
 	for current != 0 {
 		if current == monitorID {
-			return true
+			return true, nil
 		}
 		if seen[current] {
-			return true
+			return true, nil
 		}
 		seen[current] = true
 
 		parentID, err := userMonitorParentID(db, userID, current)
-		if err != nil || parentID == nil {
-			return false
+		if err != nil {
+			return false, err
+		}
+		if parentID == nil {
+			return false, nil
 		}
 		current = *parentID
 	}
-	return false
+	return false, nil
 }
 
 func userGroupPath(db *gorm.DB, userID uint, groupID *uint) []string {

@@ -94,10 +94,33 @@ func TestWouldCreateGroupCycleFollowsOwnedParentChain(t *testing.T) {
 		t.Fatalf("create leaf: %v", err)
 	}
 
-	if !wouldCreateGroupCycle(db, 1, root.ID, leaf.ID) {
+	cycle, err := wouldCreateGroupCycle(db, 1, root.ID, leaf.ID)
+	if err != nil {
+		t.Fatalf("cycle check: %v", err)
+	}
+	if !cycle {
 		t.Fatalf("expected assigning root under leaf to create a cycle")
 	}
-	if wouldCreateGroupCycle(db, 1, leaf.ID, root.ID) {
+	cycle, err = wouldCreateGroupCycle(db, 1, leaf.ID, root.ID)
+	if err != nil {
+		t.Fatalf("cycle check: %v", err)
+	}
+	if cycle {
 		t.Fatalf("did not expect assigning leaf under root to create a cycle")
+	}
+}
+
+func TestWouldCreateGroupCycleReturnsLookupErrors(t *testing.T) {
+	db := testDB(t)
+	root := model.Monitor{UserID: 1, Name: "root", Type: model.MonitorTypeGroup}
+	if err := db.Create(&root).Error; err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if err := db.Migrator().DropTable(&model.Monitor{}); err != nil {
+		t.Fatalf("drop monitors: %v", err)
+	}
+
+	if _, err := wouldCreateGroupCycle(db, 1, root.ID, root.ID+1); err == nil {
+		t.Fatal("expected lookup error")
 	}
 }

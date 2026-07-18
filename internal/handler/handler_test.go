@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,21 +28,25 @@ type schedulerCall struct {
 }
 
 type fakeScheduler struct {
-	calls []schedulerCall
+	calls      []schedulerCall
+	startErr   error
+	restartErr error
 }
 
 var testDBSeq uint64
 
-func (s *fakeScheduler) StartMonitor(m *model.Monitor) {
+func (s *fakeScheduler) StartMonitor(m *model.Monitor) error {
 	s.calls = append(s.calls, schedulerCall{action: "start", id: m.ID})
+	return s.startErr
 }
 
 func (s *fakeScheduler) StopMonitor(id uint) {
 	s.calls = append(s.calls, schedulerCall{action: "stop", id: id})
 }
 
-func (s *fakeScheduler) RestartMonitor(m *model.Monitor) {
+func (s *fakeScheduler) RestartMonitor(m *model.Monitor) error {
 	s.calls = append(s.calls, schedulerCall{action: "restart", id: m.ID})
+	return s.restartErr
 }
 
 func testDB(t *testing.T) *gorm.DB {
@@ -261,6 +266,49 @@ func TestInvalidResourceIDReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestMonitorLookupDatabaseErrorReturnsServerError(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+	if err := db.Migrator().DropTable(&model.Monitor{}); err != nil {
+		t.Fatalf("drop monitors: %v", err)
+	}
+
+	resp := authedRequest(t, r, http.MethodGet, "/api/monitors/1", nil, token)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["code"] != "monitor_lookup_failed" {
+		t.Fatalf("body=%v", body)
+	}
+}
+
+func TestCreateMonitorReturnsSchedulerStartErrors(t *testing.T) {
+	db := testDB(t)
+	schedulerErr := errors.New("scheduler unavailable")
+	r, user := setupRouter(t, db, &fakeScheduler{startErr: schedulerErr})
+	token := authToken(t, user)
+
+	resp := authedRequest(t, r, http.MethodPost, "/api/monitors", gin.H{
+		"name": "group",
+		"type": model.MonitorTypeGroup,
+	}, token)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["code"] != "monitor_scheduler_start_failed" {
+		t.Fatalf("body=%v", body)
+	}
+}
+
 func TestDeleteMissingOwnedResourcesReturnsNotFound(t *testing.T) {
 	db := testDB(t)
 	r, user := setupRouter(t, db, &fakeScheduler{})
@@ -435,6 +483,29 @@ func TestNotificationTestValidatesConfig(t *testing.T) {
 	resp := authedRequest(t, r, http.MethodPost, "/api/notifications/1/test", nil, token)
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("notification test code=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestNotificationDeleteRollsBackAssociationFailures(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+	notif := model.Notification{UserID: user.ID, Name: "ops", Type: model.NotificationTypeFeishu, Config: `{}`, Active: true}
+	if err := db.Create(&notif).Error; err != nil {
+		t.Fatalf("create notification: %v", err)
+	}
+	if err := db.Migrator().DropTable(&model.MonitorNotification{}); err != nil {
+		t.Fatalf("drop monitor_notifications: %v", err)
+	}
+
+	resp := authedRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/notifications/%d", notif.ID), nil, token)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var kept model.Notification
+	if err := db.First(&kept, notif.ID).Error; err != nil {
+		t.Fatalf("notification should be kept after rollback: %v", err)
 	}
 }
 

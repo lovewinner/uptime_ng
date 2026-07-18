@@ -1,12 +1,20 @@
 package handler
 
-import "uptime_ng/internal/model"
+import (
+	"errors"
 
-func (h *MonitorHandler) monitorActivationTargets(userID uint, root model.Monitor) []model.Monitor {
+	"uptime_ng/internal/model"
+)
+
+func (h *MonitorHandler) monitorActivationTargets(userID uint, root model.Monitor) ([]model.Monitor, error) {
 	if root.Type != model.MonitorTypeGroup {
-		return []model.Monitor{root}
+		return []model.Monitor{root}, nil
 	}
-	return monitorActivationTargets(root, h.descendantMonitors(userID, root.ID))
+	descendants, err := h.descendantMonitors(userID, root.ID)
+	if err != nil {
+		return nil, err
+	}
+	return monitorActivationTargets(root, descendants), nil
 }
 
 func monitorActivationTargets(root model.Monitor, descendants []model.Monitor) []model.Monitor {
@@ -27,14 +35,18 @@ func monitorIDs(monitors []model.Monitor) []uint {
 	return ids
 }
 
-func restartMonitors(scheduler MonitorScheduler, monitors []model.Monitor) {
+func restartMonitors(scheduler MonitorScheduler, monitors []model.Monitor) error {
 	if scheduler == nil {
-		return
+		return nil
 	}
+	var errs []error
 	for i := range monitors {
 		monitors[i].Active = true
-		scheduler.RestartMonitor(&monitors[i])
+		if err := scheduler.RestartMonitor(&monitors[i]); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 func stopMonitors(scheduler MonitorScheduler, monitors []model.Monitor) {

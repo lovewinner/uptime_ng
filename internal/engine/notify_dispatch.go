@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -19,16 +20,24 @@ func NewNotifyDispatch(db *gorm.DB) *NotifyDispatch {
 	return &NotifyDispatch{DB: db}
 }
 
-func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat, isFirstBeat bool, prevStatus uint16) {
+func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat, isFirstBeat bool, prevStatus uint16) error {
 	isUp := heartbeat.Status == model.StatusUP
 
 	var mnList []model.MonitorNotification
-	d.DB.Where("monitor_id = ?", monitor.ID).Find(&mnList)
+	if err := d.DB.Where("monitor_id = ?", monitor.ID).Find(&mnList).Error; err != nil {
+		return err
+	}
 
 	notifications := make([]model.Notification, 0, len(mnList))
 	for _, mn := range mnList {
 		var notif model.Notification
 		if err := d.DB.First(&notif, mn.NotificationID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return err
+		}
+		if notif.UserID != monitor.UserID {
 			continue
 		}
 		notifications = append(notifications, notif)
@@ -51,6 +60,7 @@ func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat,
 			notifier.SendFeishuAlert(config.AppConfig.Feishu.WebhookURL, monitor.Name, monitor.Type, isUp, heartbeat.Msg)
 		}
 	}
+	return nil
 }
 
 func (d *NotifyDispatch) sendFeishu(notif model.Notification, monitor *model.Monitor, isUp bool, msg string) {
@@ -94,7 +104,7 @@ func (d *NotifyDispatch) sendEmail(notif model.Notification, monitor *model.Moni
 	}
 }
 
-func (d *NotifyDispatch) markIncident(db *gorm.DB, monitorID uint, monitorName string, prevStatus, newStatus uint16, msg string) {
+func (d *NotifyDispatch) markIncident(db *gorm.DB, monitorID uint, monitorName string, prevStatus, newStatus uint16, msg string) error {
 	if prevStatus == model.StatusUP && (newStatus == model.StatusDown || newStatus == model.StatusPending) {
 		incident := model.Incident{
 			MonitorID: monitorID,
@@ -103,7 +113,9 @@ func (d *NotifyDispatch) markIncident(db *gorm.DB, monitorID uint, monitorName s
 			StartedAt: time.Now(),
 			Msg:       msg,
 		}
-		db.Create(&incident)
+		if err := db.Create(&incident).Error; err != nil {
+			return err
+		}
 		log.Printf("Incident created: %s went %s", monitorName, statusLabel(newStatus))
 	}
 
@@ -117,10 +129,15 @@ func (d *NotifyDispatch) markIncident(db *gorm.DB, monitorID uint, monitorName s
 			recentIncident.DurationSec = uint32(now.Sub(recentIncident.StartedAt).Seconds())
 			recentIncident.Status = model.StatusUP
 			recentIncident.Title = monitorName + " recovered"
-			db.Save(&recentIncident)
+			if err := db.Save(&recentIncident).Error; err != nil {
+				return err
+			}
 			log.Printf("Incident resolved: %s recovered after %ds", monitorName, recentIncident.DurationSec)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
 		}
 	}
+	return nil
 }
 
 func statusLabel(status uint16) string {

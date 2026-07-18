@@ -29,16 +29,19 @@ func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
 	period := positiveIntParam(c.DefaultQuery("period", "3600"), 3600)
 
 	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
 	var beats []model.Heartbeat
 	cutoff := time.Now().Add(-time.Duration(period) * time.Second)
-	h.DB.Where("monitor_id = ?", monitorID).
+	if err := h.DB.Where("monitor_id = ?", monitorID).
 		Where("time > ?", cutoff).
 		Order("time ASC").
-		Find(&beats)
+		Find(&beats).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "beats_query_failed", err.Error())
+		return
+	}
 
 	c.JSON(http.StatusOK, beats)
 }
@@ -53,15 +56,18 @@ func (h *HeartbeatHandler) GetImportantBeats(c *gin.Context) {
 	limit := positiveIntParam(c.DefaultQuery("limit", "50"), 50)
 
 	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
 	var beats []model.Heartbeat
-	h.DB.Where("monitor_id = ? AND important = ?", monitorID, true).
+	if err := h.DB.Where("monitor_id = ? AND important = ?", monitorID, true).
 		Order("time DESC").
 		Limit(limit).
-		Find(&beats)
+		Find(&beats).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "important_beats_query_failed", err.Error())
+		return
+	}
 
 	c.JSON(http.StatusOK, beats)
 }
@@ -75,15 +81,18 @@ func (h *HeartbeatHandler) GetIncidents(c *gin.Context) {
 	}
 
 	if _, err := userMonitor(h.DB, userID, monitorID); err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "monitor_lookup_failed")
 		return
 	}
 
 	var incidents []model.Incident
-	h.DB.Where("monitor_id = ?", monitorID).
+	if err := h.DB.Where("monitor_id = ?", monitorID).
 		Order("started_at DESC").
 		Limit(100).
-		Find(&incidents)
+		Find(&incidents).Error; err != nil {
+		errorResponse(c, http.StatusInternalServerError, "incidents_query_failed", err.Error())
+		return
+	}
 
 	now := time.Now()
 	for i := range incidents {
@@ -116,7 +125,7 @@ func (h *HeartbeatHandler) GetStatus(c *gin.Context) {
 	}
 	result, err := engine.ComputeMonitorStatus(h.DB, userID, monitorID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		lookupErrorResponse(c, err, "monitor_not_found", "monitor not found", "status_query_failed")
 		return
 	}
 	c.JSON(http.StatusOK, result)

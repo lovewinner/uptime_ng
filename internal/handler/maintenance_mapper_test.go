@@ -85,3 +85,49 @@ func TestMaintenanceWindowFromRequestRejectsInvalidTimeRange(t *testing.T) {
 		t.Fatalf("code=%s want invalid_time_range", validationErr.code)
 	}
 }
+
+func TestBuildMaintenanceWindowValidatesOwnedMonitor(t *testing.T) {
+	db := testDB(t)
+	handler := NewMaintenanceHandler(db)
+	other := model.Monitor{UserID: 2, Name: "other", Type: model.MonitorTypeHTTP}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+	start := time.Date(2026, 7, 19, 1, 0, 0, 0, time.UTC)
+
+	_, validationErr, lookupErr := handler.buildMaintenanceWindow(MaintenanceRequest{
+		Name:      "deploy",
+		MonitorID: &other.ID,
+		StartAt:   start.Format(time.RFC3339),
+		EndAt:     start.Add(time.Hour).Format(time.RFC3339),
+	}, 1, nil)
+	if lookupErr != nil {
+		t.Fatalf("lookup error: %v", lookupErr)
+	}
+	if validationErr == nil || validationErr.code != "invalid_monitor" {
+		t.Fatalf("validationErr=%+v", validationErr)
+	}
+}
+
+func TestBuildMaintenanceWindowReturnsMonitorLookupErrors(t *testing.T) {
+	db := testDB(t)
+	handler := NewMaintenanceHandler(db)
+	monitorID := uint(9)
+	start := time.Date(2026, 7, 19, 1, 0, 0, 0, time.UTC)
+	if err := db.Migrator().DropTable(&model.Monitor{}); err != nil {
+		t.Fatalf("drop monitors: %v", err)
+	}
+
+	_, validationErr, lookupErr := handler.buildMaintenanceWindow(MaintenanceRequest{
+		Name:      "deploy",
+		MonitorID: &monitorID,
+		StartAt:   start.Format(time.RFC3339),
+		EndAt:     start.Add(time.Hour).Format(time.RFC3339),
+	}, 1, nil)
+	if validationErr != nil {
+		t.Fatalf("validationErr=%+v", validationErr)
+	}
+	if lookupErr == nil {
+		t.Fatal("expected lookup error")
+	}
+}

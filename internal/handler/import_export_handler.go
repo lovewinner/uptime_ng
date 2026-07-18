@@ -269,7 +269,11 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 		}
 		return
 	}
-	syncImportedMonitorSchedulers(h.Scheduler, importedMonitors)
+	if err := syncImportedMonitorSchedulers(h.Scheduler, importedMonitors); err != nil {
+		result.Errors = append(result.Errors, "failed to sync monitor schedulers: "+err.Error())
+		c.JSON(http.StatusInternalServerError, result)
+		return
+	}
 	result.Imported = result.Created + result.Updated
 	c.JSON(http.StatusOK, result)
 }
