@@ -3,6 +3,15 @@ import { onMounted, ref } from 'vue'
 import api from '@/api/http'
 import { apiErrorMessage, isDialogCancel } from '@/api/errors'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  activeTagType,
+  activeText,
+  activeToggleButtonType,
+  activeToggleText,
+  nextUserRole,
+  roleTagType,
+  roleToggleText,
+} from './userManagement'
 
 interface User {
   id: number
@@ -36,9 +45,8 @@ async function toggleActive(user: User) {
 }
 
 async function toggleRole(user: User) {
-  const newRole = user.role === 'admin' ? 'user' : 'admin'
   try {
-    await api.patch(`/auth/users/${user.id}`, { role: newRole })
+    await api.patch(`/auth/users/${user.id}`, { role: nextUserRole(user.role) })
     await fetchUsers()
   } catch (e: unknown) {
     ElMessage.error(apiErrorMessage(e, '操作失败'))
@@ -74,19 +82,19 @@ onMounted(fetchUsers)
       <el-table-column prop="username" label="用户名" />
       <el-table-column label="角色" width="120">
         <template #default="{ row }">
-          <el-tag :type="row.role === 'admin' ? 'danger' : 'info'" size="small">{{ row.role }}</el-tag>
+          <el-tag :type="roleTagType(row.role)" size="small">{{ row.role }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="row.active ? 'success' : 'danger'" size="small">{{ row.active ? '启用' : '禁用' }}</el-tag>
+          <el-tag :type="activeTagType(row.active)" size="small">{{ activeText(row.active) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="250">
         <template #default="{ row }">
-          <el-button size="small" @click="toggleRole(row)">{{ row.role === 'admin' ? '降级' : '提升为管理员' }}</el-button>
-          <el-button size="small" :type="row.active ? 'danger' : 'success'" @click="toggleActive(row)">
-            {{ row.active ? '禁用' : '启用' }}
+          <el-button size="small" @click="toggleRole(row)">{{ roleToggleText(row.role) }}</el-button>
+          <el-button size="small" :type="activeToggleButtonType(row.active)" @click="toggleActive(row)">
+            {{ activeToggleText(row.active) }}
           </el-button>
           <el-button size="small" @click="resetPassword(row)">重置密码</el-button>
         </template>

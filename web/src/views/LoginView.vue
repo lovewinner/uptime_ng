@@ -2,12 +2,13 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { emptyAuthForm, loginSubmitState, nextRegisterVisible, registerSubmitState } from './login'
 
 const auth = useAuthStore()
 const router = useRouter()
 
-const form = reactive({ username: '', password: '' })
-const registering = reactive({ username: '', password: '' })
+const form = reactive(emptyAuthForm())
+const registering = reactive(emptyAuthForm())
 
 const loginLoading = ref(false)
 const registerLoading = ref(false)
@@ -20,10 +21,11 @@ async function handleLogin() {
   loginError.value = ''
   const ok = await auth.login(form.username, form.password)
   loginLoading.value = false
-  if (ok) {
+  const state = loginSubmitState(ok)
+  if (state.redirect) {
     router.push('/')
   } else {
-    loginError.value = '用户名或密码错误'
+    loginError.value = state.error
   }
 }
 
@@ -32,10 +34,11 @@ async function handleRegister() {
   registerError.value = ''
   const result = await auth.register(registering.username, registering.password)
   registerLoading.value = false
-  if (result.ok) {
+  const state = registerSubmitState(result)
+  if (state.redirect) {
     router.push('/')
   } else {
-    registerError.value = result.error || '注册失败'
+    registerError.value = state.error
   }
 }
 </script>
@@ -59,7 +62,7 @@ async function handleRegister() {
           <el-button type="primary" native-type="submit" :loading="loginLoading" style="width:100%">登录</el-button>
         </el-form>
         <div style="text-align:center;margin-top:15px">
-          <el-button type="text" @click="showRegister = true">没有账号？注册</el-button>
+          <el-button type="text" @click="showRegister = nextRegisterVisible(showRegister)">没有账号？注册</el-button>
         </div>
       </template>
 
@@ -75,7 +78,7 @@ async function handleRegister() {
           <el-button type="primary" native-type="submit" :loading="registerLoading" style="width:100%">注册</el-button>
         </el-form>
         <div style="text-align:center;margin-top:15px">
-          <el-button type="text" @click="showRegister = false">已有账号？返回登录</el-button>
+          <el-button type="text" @click="showRegister = nextRegisterVisible(showRegister)">已有账号？返回登录</el-button>
         </div>
       </template>
     </el-card>

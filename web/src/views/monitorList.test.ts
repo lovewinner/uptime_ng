@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest'
 import {
   exportURL,
   intervalText,
+  monitorStatusValue,
   monitorTargetText,
   nextExpandedIds,
+  pauseResumeButtonType,
+  pauseResumeSuccessText,
+  pauseResumeText,
+  refreshIntervalSeconds,
   visibleMonitorRows,
 } from './monitorList'
+import { monitorTypeText } from './formatters'
 import type { MonitorTreeNode } from '@/stores/monitor'
 
 function node(overrides: Partial<MonitorTreeNode>): MonitorTreeNode {
@@ -84,6 +90,24 @@ describe('monitorList helpers', () => {
     expect(monitorTargetText(node({ type: 'ping', hostname: '' }))).toBe('-')
     expect(intervalText(30)).toBe('30s')
     expect(intervalText(120)).toBe('2m')
+  })
+
+  it('formats list action and status presentation values', () => {
+    expect(monitorTypeText('http')).toBe('HTTP')
+    expect(pauseResumeButtonType(true)).toBe('warning')
+    expect(pauseResumeButtonType(false)).toBe('success')
+    expect(pauseResumeText(true)).toBe('暂停')
+    expect(pauseResumeText(false)).toBe('恢复')
+    expect(pauseResumeSuccessText(true)).toBe('已暂停')
+    expect(pauseResumeSuccessText(false)).toBe('已恢复')
+    expect(monitorStatusValue(undefined)).toBe(2)
+    expect(monitorStatusValue(0)).toBe(0)
+  })
+
+  it('normalizes row refresh intervals', () => {
+    expect(refreshIntervalSeconds(0)).toBe(60)
+    expect(refreshIntervalSeconds(1)).toBe(3)
+    expect(refreshIntervalSeconds(30)).toBe(30)
   })
 
   it('builds export urls', () => {

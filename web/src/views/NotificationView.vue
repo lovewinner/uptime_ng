@@ -5,6 +5,21 @@ import { apiErrorMessage } from '@/api/errors'
 import { ElMessageBox } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import type { Notification } from '@/api/types'
+import {
+  defaultNotificationForm,
+  notificationActiveTagType,
+  notificationActiveText,
+  notificationConfigHint,
+  notificationConfigText,
+  notificationDialogTitle,
+  notificationFormFromNotification,
+  notificationPayloadFromForm,
+  notificationSavedText,
+  notificationSubmitText,
+  notificationTypeLabel,
+  notificationTypeOptions,
+  type NotificationForm,
+} from './notification'
 
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
@@ -14,25 +29,13 @@ const editingNotif = ref<Notification | null>(null)
 const formRef = ref()
 const saving = ref(false)
 
-const form = reactive({
-  name: '',
-  type: 'feishu',
-  config: '{}',
-})
+const form = reactive<NotificationForm>(defaultNotificationForm())
 
-const typeOptions = [
-  { label: '飞书', value: 'feishu' },
-  { label: '邮件', value: 'email' },
-]
-
-const configHint = computed(() => {
-  if (form.type === 'feishu') {
-    return '示例: {"webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"}'
-  }
-  return '示例: {"email": "ops@example.com"}'
-})
+const configHint = computed(() => notificationConfigHint(form.type))
 
 const isEdit = computed(() => !!editingNotif.value?.id)
+const dialogTitle = computed(() => notificationDialogTitle(isEdit.value))
+const submitText = computed(() => notificationSubmitText(isEdit.value))
 
 async function fetchNotifications() {
   loading.value = true
@@ -48,17 +51,13 @@ async function fetchNotifications() {
 
 function handleCreate() {
   editingNotif.value = null
-  form.name = ''
-  form.type = 'feishu'
-  form.config = '{}'
+  Object.assign(form, defaultNotificationForm())
   dialogVisible.value = true
 }
 
 function handleEdit(notif: Notification) {
   editingNotif.value = { ...notif }
-  form.name = notif.name
-  form.type = notif.type
-  form.config = typeof notif.config === 'string' ? notif.config : JSON.stringify(notif.config, null, 2)
+  Object.assign(form, notificationFormFromNotification(notif))
   dialogVisible.value = true
 }
 
@@ -93,20 +92,12 @@ async function handleSubmit() {
   saving.value = true
   try {
     if (isEdit.value) {
-      await api.put(`/notifications/${editingNotif.value!.id}`, {
-        name: form.name,
-        type: form.type,
-        config: form.config,
-      })
+      await api.put(`/notifications/${editingNotif.value!.id}`, notificationPayloadFromForm(form))
     } else {
-      await api.post('/notifications', {
-        name: form.name,
-        type: form.type,
-        config: form.config,
-      })
+      await api.post('/notifications', notificationPayloadFromForm(form))
     }
     dialogVisible.value = false
-    ElMessage.success(isEdit.value ? '已更新' : '已创建')
+    ElMessage.success(notificationSavedText(isEdit.value))
     await fetchNotifications()
   } catch (e: unknown) {
     ElMessage.error(apiErrorMessage(e, '保存失败'))
@@ -131,20 +122,20 @@ onMounted(() => {
       <el-table-column prop="name" label="名称" min-width="150" />
       <el-table-column prop="type" label="类型" width="100">
         <template #default="{ row }">
-          <el-tag size="small">{{ row.type === 'feishu' ? '飞书' : '邮件' }}</el-tag>
+          <el-tag size="small">{{ notificationTypeLabel(row.type) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="active" label="启用" width="80">
         <template #default="{ row }">
-          <el-tag :type="row.active ? 'success' : 'info'" size="small">
-            {{ row.active ? '是' : '否' }}
+          <el-tag :type="notificationActiveTagType(row.active)" size="small">
+            {{ notificationActiveText(row.active) }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="配置" min-width="200">
         <template #default="{ row }">
           <span style="font-size: 12px; color: #666; word-break: break-all">
-            {{ typeof row.config === 'string' ? row.config : JSON.stringify(row.config) }}
+            {{ notificationConfigText(row.config) }}
           </span>
         </template>
       </el-table-column>
@@ -161,7 +152,7 @@ onMounted(() => {
 
     <el-dialog
       v-model="dialogVisible"
-      :title="isEdit ? '编辑通知' : '新增通知'"
+      :title="dialogTitle"
       width="min(500px, 95%)"
       :close-on-click-modal="false"
       destroy-on-close
@@ -172,7 +163,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="类型" prop="type" :rules="[{ required: true }]">
           <el-select v-model="form.type" style="width: 100%">
-            <el-option v-for="opt in typeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            <el-option v-for="opt in notificationTypeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="配置" prop="config" :rules="[{ required: true, message: '请输入配置' }]">
@@ -189,7 +180,7 @@ onMounted(() => {
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="handleSubmit">
-          {{ isEdit ? '保存' : '创建' }}
+          {{ submitText }}
         </el-button>
       </template>
     </el-dialog>

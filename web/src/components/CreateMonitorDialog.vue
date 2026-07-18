@@ -8,9 +8,18 @@ import { apiErrorMessage } from '@/api/errors'
 import {
   DEFAULT_STATUS_CODES,
   addStatusCodeTag,
+  authMethodOptions,
+  bodyEncodingOptions,
   defaultMonitorPayload,
+  dnsTypeOptions,
+  httpMethodOptions,
+  monitorDialogTitle,
   monitorPayloadFromMonitor,
+  monitorSubmitPayload,
+  monitorSubmitText,
+  monitorTypeOptions,
   removeStatusCodeTag,
+  shouldFillPingHostname,
   statusCodesFromMonitor,
 } from './monitorForm'
 
@@ -39,45 +48,10 @@ const form = ref<MonitorPayload>(defaultMonitorPayload())
 
 const isEdit = computed(() => !!props.monitor?.id)
 
-const title = computed(() => isEdit.value ? '编辑监控' : '新增监控')
-
-const typeOptions = [
-  { label: 'HTTP', value: 'http' },
-  { label: 'TCP', value: 'tcp' },
-  { label: 'PING', value: 'ping' },
-  { label: 'DNS', value: 'dns' },
-  { label: 'GROUP', value: 'group' },
-]
+const title = computed(() => monitorDialogTitle(isEdit.value))
+const submitText = computed(() => monitorSubmitText(isEdit.value))
 
 const groupOptions = computed(() => store.groupOptions(props.monitor?.id))
-
-const methodOptions = [
-  { label: 'GET', value: 'GET' },
-  { label: 'POST', value: 'POST' },
-  { label: 'PUT', value: 'PUT' },
-  { label: 'DELETE', value: 'DELETE' },
-  { label: 'PATCH', value: 'PATCH' },
-  { label: 'HEAD', value: 'HEAD' },
-  { label: 'OPTIONS', value: 'OPTIONS' },
-]
-
-const authOptions = [
-  { label: '无', value: '' },
-  { label: 'Basic', value: 'basic' },
-  { label: 'Bearer Token', value: 'bearer' },
-  { label: 'OAuth2 Client Credentials', value: 'oauth2-cc' },
-  { label: 'NTLM', value: 'ntlm' },
-  { label: 'mTLS', value: 'mtls' },
-]
-
-const bodyEncodingOptions = [
-  { label: 'JSON', value: 'json' },
-  { label: 'Form', value: 'form' },
-  { label: 'XML', value: 'xml' },
-  { label: 'Raw', value: 'raw' },
-]
-
-const dnsTypeOptions = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'].map((value) => ({ label: value, value }))
 
 function addStatusCode(value: string) {
   statusTags.value = addStatusCodeTag(statusTags.value, value)
@@ -110,7 +84,7 @@ watch(
 )
 
 function handleNameBlur() {
-  if (form.value.type === 'ping' && !form.value.hostname) {
+  if (shouldFillPingHostname(form.value.type, form.value.hostname)) {
     form.value.hostname = form.value.name
   }
 }
@@ -121,10 +95,7 @@ async function handleSubmit() {
 
   saving.value = true
   try {
-    const payload: MonitorPayload = {
-      ...form.value,
-      port: form.value.port || 0,
-    }
+    const payload = monitorSubmitPayload(form.value)
     if (isEdit.value) {
       await store.updateMonitor(props.monitor!.id, payload)
     } else {
@@ -175,7 +146,7 @@ function handleStatusCodeInput(event: Event) {
 
       <el-form-item label="类型" prop="type" :rules="[{ required: true }]">
         <el-select v-model="form.type" placeholder="选择监控类型">
-          <el-option v-for="opt in typeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          <el-option v-for="opt in monitorTypeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
       </el-form-item>
 
@@ -212,7 +183,7 @@ function handleStatusCodeInput(event: Event) {
         </el-form-item>
         <el-form-item label="请求方法" prop="method">
           <el-select v-model="form.method">
-            <el-option v-for="opt in methodOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            <el-option v-for="opt in httpMethodOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
       </template>
@@ -312,7 +283,7 @@ function handleStatusCodeInput(event: Event) {
 
         <el-form-item label="认证方式">
           <el-select v-model="form.auth_method" style="width: 100%">
-            <el-option v-for="opt in authOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            <el-option v-for="opt in authMethodOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
 
@@ -439,7 +410,7 @@ function handleStatusCodeInput(event: Event) {
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
       <el-button type="primary" :loading="saving" @click="handleSubmit">
-        {{ isEdit ? '保存' : '创建' }}
+        {{ submitText }}
       </el-button>
     </template>
   </el-dialog>

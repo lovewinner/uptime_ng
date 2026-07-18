@@ -3,34 +3,31 @@ import { ref } from 'vue'
 import api from '@/api/http'
 import { apiErrorMessage } from '@/api/errors'
 import { wsClient } from '@/api/ws'
+import { clearAuthSnapshot, emptyAuthSnapshot, loadAuthSnapshot, saveAuthSnapshot } from './authStorage'
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem('token') || '')
-  const username = ref(localStorage.getItem('username') || '')
-  const role = ref(localStorage.getItem('role') || '')
-  const userId = ref(Number(localStorage.getItem('user_id') || '0'))
+  const stored = loadAuthSnapshot()
+  const token = ref(stored.token)
+  const username = ref(stored.username)
+  const role = ref(stored.role)
+  const userId = ref(stored.userId)
 
   function setAuth(t: string, uname: string, r: string, uid: number) {
     token.value = t
     username.value = uname
     role.value = r
     userId.value = uid
-    localStorage.setItem('token', t)
-    localStorage.setItem('username', uname)
-    localStorage.setItem('role', r)
-    localStorage.setItem('user_id', String(uid))
+    saveAuthSnapshot({ token: t, username: uname, role: r, userId: uid })
     wsClient.connect()
   }
 
   function logout() {
-    token.value = ''
-    username.value = ''
-    role.value = ''
-    userId.value = 0
-    localStorage.removeItem('token')
-    localStorage.removeItem('username')
-    localStorage.removeItem('role')
-    localStorage.removeItem('user_id')
+    const empty = emptyAuthSnapshot()
+    token.value = empty.token
+    username.value = empty.username
+    role.value = empty.role
+    userId.value = empty.userId
+    clearAuthSnapshot()
     wsClient.disconnect()
   }
 

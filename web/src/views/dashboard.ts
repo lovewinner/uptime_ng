@@ -1,4 +1,5 @@
 import type { MonitorStatus } from '@/api/types'
+import { millisecondsText, percentText, roundedNumber } from './formatters'
 
 export interface DashboardSummary {
   realStatuses: MonitorStatus[]
@@ -41,5 +42,14 @@ export function averagePositivePing(statuses: MonitorStatus[]): number {
 }
 
 export function uptimePercent(value: number): string {
-  return (value * 100).toFixed(2) + '%'
+  return percentText(value, 2)
+}
+
+export function pingText(ping: number | undefined | null): string {
+  if (!ping) return '-'
+  return millisecondsText(ping, 0)
+}
+
+export function averagePingValue(ping: number): number {
+  return roundedNumber(ping, 0)
 }

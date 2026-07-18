@@ -4,7 +4,14 @@ import api from '@/api/http'
 import { apiErrorMessage } from '@/api/errors'
 import {
   defaultImportStrategy,
+  emptyImportState,
+  hasConflicts,
+  hasImportErrors,
+  hasMaskedNotifications,
+  hasNewTags,
+  hasNotifications,
   initialImportStep,
+  maskedNotificationsWarning,
   parseImportJSON,
   type ImportPreview,
   type ImportResult,
@@ -75,10 +82,11 @@ async function executeImport() {
 }
 
 function close() {
-  step.value = initialImportStep()
-  previewData.value = null
-  importResult.value = null
-  error.value = ''
+  const state = emptyImportState()
+  step.value = state.step
+  previewData.value = state.previewData
+  importResult.value = state.importResult
+  error.value = state.error
   visible.value = false
 }
 </script>
@@ -95,8 +103,8 @@ function close() {
       <h4>导入预览</h4>
       <div v-if="previewData">
         <p>将导入 <b>{{ previewData.new_count }}</b> 个新监控项</p>
-        <p v-if="previewData.conflict_count > 0">发现 <b>{{ previewData.conflict_count }}</b> 个同名冲突</p>
-        <div v-if="previewData.conflict_count > 0" style="margin: 15px 0">
+        <p v-if="hasConflicts(previewData)">发现 <b>{{ previewData.conflict_count }}</b> 个同名冲突</p>
+        <div v-if="hasConflicts(previewData)" style="margin: 15px 0">
           <p>冲突处理策略：</p>
           <el-radio-group v-model="strategy">
             <el-radio value="skip">跳过同名</el-radio>
@@ -106,18 +114,18 @@ function close() {
           <el-alert v-if="strategy === 'overwrite'" title="覆盖会替换同名监控项配置、标签和通知关联" type="warning" show-icon :closable="false" style="margin-top:10px" />
         </div>
 
-        <div v-if="previewData.notifications > 0" style="margin-top:10px">
+        <div v-if="hasNotifications(previewData)" style="margin-top:10px">
           <p>文件包含 <b>{{ previewData.notifications }}</b> 个通知配置</p>
           <el-alert
-            v-if="previewData.masked_notifications > 0"
-            :title="`${previewData.masked_notifications} 个通知配置包含脱敏密钥，导入后需要手动补齐`"
+            v-if="hasMaskedNotifications(previewData)"
+            :title="maskedNotificationsWarning(previewData.masked_notifications)"
             type="warning"
             show-icon
             :closable="false"
           />
         </div>
 
-        <div v-if="previewData.new_tags && previewData.new_tags.length > 0" style="margin-top:10px">
+        <div v-if="hasNewTags(previewData)" style="margin-top:10px">
           <p>会创建以下新标签：</p>
           <el-tag v-for="t in previewData.new_tags" :key="t.name" :color="t.color" style="margin-right:5px">{{ t.name }}</el-tag>
         </div>
@@ -135,7 +143,7 @@ function close() {
           <el-descriptions-item label="更新">{{ importResult.updated }}</el-descriptions-item>
           <el-descriptions-item label="跳过">{{ importResult.skipped }}</el-descriptions-item>
         </el-descriptions>
-        <div v-if="importResult.errors && importResult.errors.length > 0" style="margin-top:10px">
+        <div v-if="hasImportErrors(importResult)" style="margin-top:10px">
           <el-alert v-for="err in importResult.errors" :key="err" :title="err" type="warning" show-icon :closable="false" style="margin-bottom:5px" />
         </div>
       </div>

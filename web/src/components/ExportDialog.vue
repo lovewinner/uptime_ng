@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { exportIDsForChoice, selectedExportIDs, type ExportChoice } from './exportHelpers'
 
 const props = defineProps<{
   modelValue: boolean
@@ -16,11 +17,11 @@ const visible = computed({
   set: (val) => emit('update:modelValue', val),
 })
 
-const chosen = ref<'all' | 'selected'>('all')
-const selectedIds = computed(() => props.monitors.filter((m) => m.name !== '').map((m) => m.id))
+const chosen = ref<ExportChoice>('all')
+const selectedIds = computed(() => selectedExportIDs(props.monitors))
 
 function confirmExport() {
-  emit('export', chosen.value === 'selected' ? selectedIds.value : undefined)
+  emit('export', exportIDsForChoice(chosen.value, props.monitors))
   visible.value = false
 }
 </script>

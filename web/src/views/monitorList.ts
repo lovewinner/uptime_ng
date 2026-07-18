@@ -30,6 +30,26 @@ export function intervalText(seconds: number): string {
   return `${Math.floor(seconds / 60)}m`
 }
 
+export function refreshIntervalSeconds(interval: number): number {
+  return Math.max(3, interval || 60)
+}
+
+export function pauseResumeButtonType(active: boolean): 'warning' | 'success' {
+  return active ? 'warning' : 'success'
+}
+
+export function pauseResumeText(active: boolean): string {
+  return active ? '暂停' : '恢复'
+}
+
+export function pauseResumeSuccessText(activeBeforeAction: boolean): string {
+  return activeBeforeAction ? '已暂停' : '已恢复'
+}
+
+export function monitorStatusValue(status: number | undefined): number {
+  return status ?? 2
+}
+
 export function exportURL(ids?: number[]): string {
   if (!ids?.length) {
     return '/monitors/export'

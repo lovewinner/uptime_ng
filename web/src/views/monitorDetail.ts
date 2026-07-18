@@ -1,4 +1,5 @@
-import type { Heartbeat, UptimeDataPoint } from '@/api/types'
+import type { Heartbeat, Monitor, UptimeDataPoint } from '@/api/types'
+import { localDateTimeText, millisecondsText, percentText, timestampMonthDayText } from './formatters'
 
 type TooltipParam = {
   name: string
@@ -6,12 +7,30 @@ type TooltipParam = {
 }
 
 export function uptimePercent(value: number): string {
-  return (value * 100).toFixed(2) + '%'
+  return percentText(value, 2)
+}
+
+export function detailColumnCount(width: number): number {
+  if (width < 640) return 1
+  if (width < 1024) return 2
+  return 3
+}
+
+export function visibleBeatCount(containerWidth: number): number {
+  return Math.max(10, Math.floor(containerWidth / 14))
+}
+
+export function monitorTargetLabel(type: string): string {
+  return type === 'ping' ? '主机名' : 'URL / 主机名'
+}
+
+export function monitorTargetText(monitor: Pick<Monitor, 'url' | 'hostname'>): string {
+  return monitor.url || monitor.hostname || '-'
 }
 
 export function formatPing(ping: number | null): string {
   if (ping == null) return '-'
-  return ping.toFixed(1) + ' ms'
+  return millisecondsText(ping, 1)
 }
 
 export function heartbeatStatusText(status: number): string {
@@ -33,11 +52,19 @@ export function heartbeatColor(status: number): string {
 }
 
 export function heartbeatTitle(beat: Heartbeat): string {
-  return `${new Date(beat.time).toLocaleString('zh-CN')} · ${heartbeatStatusText(beat.status)} · ${formatPing(beat.ping_ms)}`
+  return `${localDateTimeText(beat.time)} · ${heartbeatStatusText(beat.status)} · ${formatPing(beat.ping_ms)}`
 }
 
 export function incidentDuration(seconds: number): string {
   return seconds ? Math.floor(seconds / 60) + 'm' : '-'
+}
+
+export function incidentTimeText(value: string): string {
+  return localDateTimeText(value)
+}
+
+export function incidentEndTimeText(value: string | null): string {
+  return value ? incidentTimeText(value) : '未结束'
 }
 
 export function incidentStatusText(status: number): string {
@@ -105,16 +132,13 @@ export function buildUptimeChartOption(data: UptimeDataPoint[]) {
       formatter: (params: TooltipParam[]) => {
         const point = params[0]
         if (!point) return ''
-        return `${point.name}<br/>可用率: ${(point.value * 100).toFixed(2)}%`
+        return `${point.name}<br/>可用率: ${percentText(point.value, 2)}`
       },
     },
     grid: { left: 55, right: 20, top: 30, bottom: 50 },
     xAxis: {
       type: 'category',
-      data: data.map((point) => {
-        const date = new Date(point.timestamp * 1000)
-        return (date.getMonth() + 1) + '月' + date.getDate() + '日'
-      }),
+      data: data.map((point) => timestampMonthDayText(point.timestamp)),
       axisLabel: {
         margin: 10,
       },
@@ -123,7 +147,7 @@ export function buildUptimeChartOption(data: UptimeDataPoint[]) {
       type: 'value',
       min: 0,
       max: 1,
-      axisLabel: { formatter: (value: number) => (value * 100).toFixed(0) + '%' },
+      axisLabel: { formatter: (value: number) => percentText(value, 0) },
     },
     series: [
       {

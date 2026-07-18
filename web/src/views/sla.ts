@@ -1,3 +1,5 @@
+import { millisecondsText, percentText } from './formatters'
+
 export interface SLAItem {
   monitor_id: number
   monitor_name: string
@@ -18,7 +20,7 @@ export function uptimeClass(pct: number): string {
 
 export function uptimePercent(pct: number | undefined | null): string {
   if (pct == null) return '-'
-  return (pct * 100).toFixed(3) + '%'
+  return percentText(pct, 3)
 }
 
 export function formatDowntime(seconds: number): string {
@@ -29,4 +31,17 @@ export function formatDowntime(seconds: number): string {
   if (h > 0) return `${h}h ${m}m ${s}s`
   if (m > 0) return `${m}m ${s}s`
   return `${s}s`
+}
+
+export function failedChecksColor(count: number): string {
+  return count > 0 ? '#F56C6C' : '#67C23A'
+}
+
+export function averagePingText(ping: number | undefined | null): string {
+  if (!ping) return '-'
+  return millisecondsText(ping, 1)
+}
+
+export function incidentTagType(count: number): 'danger' | 'success' {
+  return count > 0 ? 'danger' : 'success'
 }

@@ -5,6 +5,17 @@ import { apiErrorMessage } from '@/api/errors'
 import { useMonitorStore } from '@/stores/monitor'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { MaintenanceWindow } from '@/api/types'
+import {
+  defaultMaintenanceForm,
+  maintenanceActiveTagType,
+  maintenanceActiveText,
+  maintenanceDialogTitle,
+  maintenanceFormFromWindow,
+  maintenanceMonitorName,
+  maintenancePayloadFromForm,
+  maintenanceTimeText,
+  type MaintenanceForm,
+} from './maintenance'
 
 const store = useMonitorStore()
 const windows = ref<MaintenanceWindow[]>([])
@@ -13,16 +24,9 @@ const dialogVisible = ref(false)
 const editing = ref<MaintenanceWindow | null>(null)
 const formRef = ref()
 const saving = ref(false)
-const form = reactive({
-  name: '',
-  description: '',
-  monitor_id: null as number | null,
-  start_at: '',
-  end_at: '',
-  active: true,
-})
+const form = reactive<MaintenanceForm>(defaultMaintenanceForm())
 
-const title = computed(() => editing.value ? '编辑维护窗口' : '新增维护窗口')
+const title = computed(() => maintenanceDialogTitle(editing.value))
 
 async function fetchWindows() {
   loading.value = true
@@ -36,23 +40,13 @@ async function fetchWindows() {
 
 function openCreate() {
   editing.value = null
-  form.name = ''
-  form.description = ''
-  form.monitor_id = null
-  form.start_at = ''
-  form.end_at = ''
-  form.active = true
+  Object.assign(form, defaultMaintenanceForm())
   dialogVisible.value = true
 }
 
 function openEdit(row: MaintenanceWindow) {
   editing.value = row
-  form.name = row.name
-  form.description = row.description || ''
-  form.monitor_id = row.monitor_id
-  form.start_at = row.start_at
-  form.end_at = row.end_at
-  form.active = row.active
+  Object.assign(form, maintenanceFormFromWindow(row))
   dialogVisible.value = true
 }
 
@@ -61,11 +55,7 @@ async function submit() {
   if (!valid) return
   saving.value = true
   try {
-    const payload = {
-      ...form,
-      start_at: toRFC3339(form.start_at),
-      end_at: toRFC3339(form.end_at),
-    }
+    const payload = maintenancePayloadFromForm(form)
     if (editing.value) {
       await api.put(`/maintenance/${editing.value.id}`, payload)
     } else {
@@ -93,12 +83,7 @@ async function remove(row: MaintenanceWindow) {
 }
 
 function monitorName(id: number | null) {
-  if (!id) return '全部监控'
-  return store.monitors.find((m) => m.id === id)?.name || `#${id}`
-}
-
-function toRFC3339(value: string) {
-  return new Date(value).toISOString()
+  return maintenanceMonitorName(store.monitors, id)
 }
 
 onMounted(async () => {
@@ -119,14 +104,14 @@ onMounted(async () => {
         <template #default="{ row }">{{ monitorName(row.monitor_id) }}</template>
       </el-table-column>
       <el-table-column label="开始" width="190">
-        <template #default="{ row }">{{ new Date(row.start_at).toLocaleString('zh-CN') }}</template>
+        <template #default="{ row }">{{ maintenanceTimeText(row.start_at) }}</template>
       </el-table-column>
       <el-table-column label="结束" width="190">
-        <template #default="{ row }">{{ new Date(row.end_at).toLocaleString('zh-CN') }}</template>
+        <template #default="{ row }">{{ maintenanceTimeText(row.end_at) }}</template>
       </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
-          <el-tag :type="row.active ? 'success' : 'info'" size="small">{{ row.active ? '启用' : '停用' }}</el-tag>
+          <el-tag :type="maintenanceActiveTagType(row.active)" size="small">{{ maintenanceActiveText(row.active) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">

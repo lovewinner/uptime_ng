@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   addStatusCodeTag,
+  authMethodOptions,
+  bodyEncodingOptions,
   defaultMonitorPayload,
+  dnsTypeOptions,
+  httpMethodOptions,
+  monitorDialogTitle,
   monitorPayloadFromMonitor,
+  monitorSubmitPayload,
+  monitorSubmitText,
+  monitorTypeOptions,
   removeStatusCodeTag,
+  shouldFillPingHostname,
   statusCodesFromMonitor,
 } from './monitorForm'
 import type { Monitor } from '@/stores/monitor'
@@ -93,5 +102,28 @@ describe('monitorForm helpers', () => {
     expect(addStatusCodeTag(tags, '200-299')).toBe(tags)
     expect(removeStatusCodeTag(['200-299', '500'], '500')).toEqual(['200-299'])
     expect(statusCodesFromMonitor(null)).toEqual(['200-299'])
+  })
+
+  it('exposes stable form option lists', () => {
+    expect(monitorTypeOptions.map((option) => option.value)).toEqual(['http', 'tcp', 'ping', 'dns', 'group'])
+    expect(httpMethodOptions.map((option) => option.value)).toContain('PATCH')
+    expect(authMethodOptions.map((option) => option.value)).toContain('oauth2-cc')
+    expect(bodyEncodingOptions.map((option) => option.value)).toEqual(['json', 'form', 'xml', 'raw'])
+    expect(dnsTypeOptions.map((option) => option.value)).toEqual(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'])
+  })
+
+  it('derives dialog labels and form update rules', () => {
+    expect(monitorDialogTitle(true)).toBe('编辑监控')
+    expect(monitorDialogTitle(false)).toBe('新增监控')
+    expect(monitorSubmitText(true)).toBe('保存')
+    expect(monitorSubmitText(false)).toBe('创建')
+    expect(shouldFillPingHostname('ping', '')).toBe(true)
+    expect(shouldFillPingHostname('ping', 'example.com')).toBe(false)
+    expect(shouldFillPingHostname('http', '')).toBe(false)
+  })
+
+  it('normalizes submit payload transport fields', () => {
+    expect(monitorSubmitPayload({ ...defaultMonitorPayload(), port: 0 }).port).toBe(0)
+    expect(monitorSubmitPayload({ ...defaultMonitorPayload(), port: 443 }).port).toBe(443)
   })
 })

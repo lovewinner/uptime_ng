@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { MonitorStatus } from '@/api/types'
-import { averagePositivePing, countByStatus, dashboardSummary, uptimePercent } from './dashboard'
+import {
+  averagePingValue,
+  averagePositivePing,
+  countByStatus,
+  dashboardSummary,
+  pingText,
+  uptimePercent,
+} from './dashboard'
+import { monitorTypeText } from './formatters'
 
 function status(partial: Partial<MonitorStatus>): MonitorStatus {
   return {
@@ -48,5 +56,14 @@ describe('dashboard helpers', () => {
 
   it('formats uptime percent', () => {
     expect(uptimePercent(0.9999)).toBe('99.99%')
+  })
+
+  it('formats table and statistic presentation values', () => {
+    expect(monitorTypeText('http')).toBe('HTTP')
+    expect(pingText(null)).toBe('-')
+    expect(pingText(undefined)).toBe('-')
+    expect(pingText(0)).toBe('-')
+    expect(pingText(12.6)).toBe('13 ms')
+    expect(averagePingValue(12.6)).toBe(13)
   })
 })

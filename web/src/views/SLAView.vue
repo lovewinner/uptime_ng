@@ -3,7 +3,16 @@ import { onMounted, ref, computed } from 'vue'
 import api from '@/api/http'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouter } from 'vue-router'
-import { formatDowntime, uptimeClass, uptimePercent, type SLAItem } from './sla'
+import {
+  averagePingText,
+  failedChecksColor,
+  formatDowntime,
+  incidentTagType,
+  uptimeClass,
+  uptimePercent,
+  type SLAItem,
+} from './sla'
+import { monitorTypeText } from './formatters'
 
 const store = useMonitorStore()
 const router = useRouter()
@@ -69,7 +78,7 @@ onMounted(async () => {
       </el-table-column>
       <el-table-column label="类型" width="130">
         <template #default="{ row }">
-          <el-tag size="small">{{ row.monitor_type.toUpperCase() }}</el-tag>
+          <el-tag size="small">{{ monitorTypeText(row.monitor_type) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="可用率" width="120" align="center">
@@ -86,19 +95,19 @@ onMounted(async () => {
       </el-table-column>
       <el-table-column label="失败" width="80" align="center">
         <template #default="{ row }">
-          <span :style="{ color: row.failed_checks > 0 ? '#F56C6C' : '#67C23A' }">
+          <span :style="{ color: failedChecksColor(row.failed_checks) }">
             {{ row.failed_checks }}
           </span>
         </template>
       </el-table-column>
       <el-table-column label="平均延迟" width="110" align="center">
         <template #default="{ row }">
-          {{ row.avg_ping_ms ? row.avg_ping_ms.toFixed(1) + ' ms' : '-' }}
+          {{ averagePingText(row.avg_ping_ms) }}
         </template>
       </el-table-column>
       <el-table-column label="故障次数" width="100" align="center">
         <template #default="{ row }">
-          <el-tag :type="row.incidents > 0 ? 'danger' : 'success'" size="small">
+          <el-tag :type="incidentTagType(row.incidents)" size="small">
             {{ row.incidents }}
           </el-tag>
         </template>

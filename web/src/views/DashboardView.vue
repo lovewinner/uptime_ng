@@ -2,7 +2,8 @@
 import { computed, onMounted } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouter } from 'vue-router'
-import { dashboardSummary, uptimePercent } from './dashboard'
+import { averagePingValue, dashboardSummary, pingText, uptimePercent } from './dashboard'
+import { monitorTypeText } from './formatters'
 
 const store = useMonitorStore()
 const router = useRouter()
@@ -28,7 +29,7 @@ function goMonitor(id: number) {
       <el-statistic title="UP" :value="summary.upCount" />
       <el-statistic title="DOWN" :value="summary.downCount" />
       <el-statistic title="PENDING" :value="summary.pendingCount" />
-      <el-statistic title="平均响应(ms)" :value="Number(summary.avgPing.toFixed(0))" />
+      <el-statistic title="平均响应(ms)" :value="averagePingValue(summary.avgPing)" />
       <el-button type="primary" @click="router.push('/monitors')" style="margin-left: auto">管理监控项</el-button>
     </div>
 
@@ -38,14 +39,14 @@ function goMonitor(id: number) {
           <div style="display: flex; justify-content: space-between; align-items: center">
             <div>
               <h4 style="margin: 0 0 8px 0">{{ s.name }}</h4>
-              <el-tag size="small">{{ s.type.toUpperCase() }}</el-tag>
+              <el-tag size="small">{{ monitorTypeText(s.type) }}</el-tag>
             </div>
             <div style="text-align: right">
               <el-tag :type="store.statusColor(s.status)" size="large" effect="dark">
                 {{ store.statusText(s.status) }}
               </el-tag>
               <div style="margin-top: 8px; font-size: 13px; color: #666">
-                {{ s.ping_ms ? s.ping_ms.toFixed(0) + ' ms' : '-' }}
+                {{ pingText(s.ping_ms) }}
               </div>
               <div style="font-size: 12px; color: #999">
                 24h: {{ uptimePercent(s.uptime_24h) }}
@@ -64,7 +65,7 @@ function goMonitor(id: number) {
         <el-table-column prop="name" label="监控项" min-width="160" />
         <el-table-column prop="type" label="类型" width="90">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
+            <el-tag size="small">{{ monitorTypeText(row.type) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="110">
@@ -76,7 +77,7 @@ function goMonitor(id: number) {
         </el-table-column>
         <el-table-column label="响应" width="110">
           <template #default="{ row }">
-            {{ row.ping_ms ? row.ping_ms.toFixed(0) + ' ms' : '-' }}
+            {{ pingText(row.ping_ms) }}
           </template>
         </el-table-column>
       </el-table>

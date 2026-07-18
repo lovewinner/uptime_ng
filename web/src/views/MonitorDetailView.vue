@@ -14,13 +14,20 @@ import type { Monitor } from '@/stores/monitor'
 import {
   buildPingChartOption,
   buildUptimeChartOption,
+  detailColumnCount,
   heartbeatColor,
   heartbeatTitle,
   incidentDuration,
+  incidentEndTimeText,
   incidentStatusText,
   incidentStatusType,
+  incidentTimeText,
+  monitorTargetLabel,
+  monitorTargetText,
   uptimePercent,
+  visibleBeatCount,
 } from './monitorDetail'
+import { monitorTypeText } from './formatters'
 
 use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -44,7 +51,7 @@ onUnmounted(() => {
   unsubscribeWS?.()
 })
 
-const descColumns = computed(() => windowWidth.value < 640 ? 1 : windowWidth.value < 1024 ? 2 : 3)
+const descColumns = computed(() => detailColumnCount(windowWidth.value))
 
 const monitor = ref<Monitor | null>(null)
 const currentStatus = computed(() => {
@@ -64,7 +71,7 @@ const uptimeSummary = ref<UptimeSummary>({ uptime_24h: 0, uptime_30d: 0, uptime_
 const beatsContainer = ref<{ $el?: HTMLElement } | null>(null)
 const containerWidth = ref(0)
 const allBeats = ref<Heartbeat[]>([])
-const beatCount = computed(() => Math.max(10, Math.floor(containerWidth.value / 14)))
+const beatCount = computed(() => visibleBeatCount(containerWidth.value))
 const heartbeatList = computed(() => allBeats.value.slice(-beatCount.value))
 
 async function loadBeats() {
@@ -141,10 +148,10 @@ onMounted(async () => {
       <el-descriptions :column="descColumns" border style="margin-bottom: 24px">
         <el-descriptions-item label="名称">{{ monitor.name }}</el-descriptions-item>
         <el-descriptions-item label="类型">
-          <el-tag size="small">{{ monitor.type.toUpperCase() }}</el-tag>
+          <el-tag size="small">{{ monitorTypeText(monitor.type) }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item v-if="monitor.type !== 'group'" :label="monitor.type === 'ping' ? '主机名' : 'URL / 主机名'">
-          {{ monitor.url || monitor.hostname || '-' }}
+        <el-descriptions-item v-if="monitor.type !== 'group'" :label="monitorTargetLabel(monitor.type)">
+          {{ monitorTargetText(monitor) }}
         </el-descriptions-item>
         <el-descriptions-item v-if="monitor.type !== 'group'" label="检查间隔">
           {{ monitor.interval }}s
@@ -176,7 +183,7 @@ onMounted(async () => {
           <el-table-column prop="name" label="名称" min-width="160" />
           <el-table-column prop="type" label="类型" width="160">
             <template #default="{ row }">
-              <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
+              <el-tag size="small">{{ monitorTypeText(row.type) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="110">
@@ -245,12 +252,12 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="开始时间" width="160">
             <template #default="{ row }">
-              {{ new Date(row.started_at).toLocaleString('zh-CN') }}
+              {{ incidentTimeText(row.started_at) }}
             </template>
           </el-table-column>
           <el-table-column label="结束时间" width="160">
             <template #default="{ row }">
-              {{ row.ended_at ? new Date(row.ended_at).toLocaleString('zh-CN') : '未结束' }}
+              {{ incidentEndTimeText(row.ended_at) }}
             </template>
           </el-table-column>
           <el-table-column label="持续" width="100">

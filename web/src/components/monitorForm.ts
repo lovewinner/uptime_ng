@@ -3,6 +3,42 @@ import type { MonitorPayload } from '@/api/types'
 
 export const DEFAULT_STATUS_CODES = ['200-299']
 
+export const monitorTypeOptions = [
+  { label: 'HTTP', value: 'http' },
+  { label: 'TCP', value: 'tcp' },
+  { label: 'PING', value: 'ping' },
+  { label: 'DNS', value: 'dns' },
+  { label: 'GROUP', value: 'group' },
+]
+
+export const httpMethodOptions = [
+  { label: 'GET', value: 'GET' },
+  { label: 'POST', value: 'POST' },
+  { label: 'PUT', value: 'PUT' },
+  { label: 'DELETE', value: 'DELETE' },
+  { label: 'PATCH', value: 'PATCH' },
+  { label: 'HEAD', value: 'HEAD' },
+  { label: 'OPTIONS', value: 'OPTIONS' },
+]
+
+export const authMethodOptions = [
+  { label: '无', value: '' },
+  { label: 'Basic', value: 'basic' },
+  { label: 'Bearer Token', value: 'bearer' },
+  { label: 'OAuth2 Client Credentials', value: 'oauth2-cc' },
+  { label: 'NTLM', value: 'ntlm' },
+  { label: 'mTLS', value: 'mtls' },
+]
+
+export const bodyEncodingOptions = [
+  { label: 'JSON', value: 'json' },
+  { label: 'Form', value: 'form' },
+  { label: 'XML', value: 'xml' },
+  { label: 'Raw', value: 'raw' },
+]
+
+export const dnsTypeOptions = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'].map((value) => ({ label: value, value }))
+
 export function defaultMonitorPayload(): MonitorPayload {
   return {
     name: '',
@@ -125,4 +161,23 @@ export function addStatusCodeTag(tags: string[], value: string): string[] {
 
 export function removeStatusCodeTag(tags: string[], tag: string): string[] {
   return tags.filter((item) => item !== tag)
+}
+
+export function monitorDialogTitle(isEdit: boolean): string {
+  return isEdit ? '编辑监控' : '新增监控'
+}
+
+export function monitorSubmitText(isEdit: boolean): string {
+  return isEdit ? '保存' : '创建'
+}
+
+export function shouldFillPingHostname(type: string, hostname: string): boolean {
+  return type === 'ping' && !hostname
+}
+
+export function monitorSubmitPayload(form: MonitorPayload): MonitorPayload {
+  return {
+    ...form,
+    port: form.port || 0,
+  }
 }

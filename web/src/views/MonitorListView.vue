@@ -12,10 +12,16 @@ import type { Monitor, MonitorTreeNode } from '@/stores/monitor'
 import {
   exportURL,
   intervalText,
+  monitorStatusValue,
   monitorTargetText,
   nextExpandedIds,
+  pauseResumeButtonType,
+  pauseResumeSuccessText,
+  pauseResumeText,
+  refreshIntervalSeconds,
   visibleMonitorRows,
 } from './monitorList'
+import { monitorTypeText } from './formatters'
 
 const store = useMonitorStore()
 const router = useRouter()
@@ -62,13 +68,11 @@ async function handleDelete(monitor: Monitor) {
 async function handlePauseResume(monitor: Monitor) {
   if (monitor.active) {
     await store.pauseMonitor(monitor.id)
-    syncVisibleRefresh()
-    ElMessage.success('已暂停')
   } else {
     await store.resumeMonitor(monitor.id)
-    syncVisibleRefresh()
-    ElMessage.success('已恢复')
   }
+  syncVisibleRefresh()
+  ElMessage.success(pauseResumeSuccessText(monitor.active))
 }
 
 function goDetail(id: number) {
@@ -130,7 +134,7 @@ function syncVisibleRefresh() {
     }
   })
   visibleRows.value.forEach((row) => {
-    const interval = Math.max(3, row.interval || 60)
+    const interval = refreshIntervalSeconds(row.interval)
     const existing = refreshTimers.get(row.id)
     if (existing && existing.interval === interval) return
     if (existing) {
@@ -183,7 +187,7 @@ async function refreshRowStatus(row: MonitorTreeNode) {
       </el-table-column>
       <el-table-column prop="type" label="类型" width="130">
         <template #default="{ row }">
-          <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
+          <el-tag size="small">{{ monitorTypeText(row.type) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="URL / 主机名" min-width="200">
@@ -193,12 +197,8 @@ async function refreshRowStatus(row: MonitorTreeNode) {
       </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="store.statusColor(
-            store.statusByID(row.id)?.status ?? 2
-          )" size="small" effect="dark">
-            {{ store.statusText(
-              store.statusByID(row.id)?.status ?? 2
-            ) }}
+          <el-tag :type="store.statusColor(monitorStatusValue(store.statusByID(row.id)?.status))" size="small" effect="dark">
+            {{ store.statusText(monitorStatusValue(store.statusByID(row.id)?.status)) }}
           </el-tag>
         </template>
       </el-table-column>
@@ -212,10 +212,10 @@ async function refreshRowStatus(row: MonitorTreeNode) {
           <el-button size="small" @click.stop="handleEdit(row)">编辑</el-button>
           <el-button
             size="small"
-            :type="row.active ? 'warning' : 'success'"
+            :type="pauseResumeButtonType(row.active)"
             @click.stop="handlePauseResume(row)"
           >
-            {{ row.active ? '暂停' : '恢复' }}
+            {{ pauseResumeText(row.active) }}
           </el-button>
           <el-button size="small" type="danger" @click.stop="handleDelete(row)">删除</el-button>
         </template>
