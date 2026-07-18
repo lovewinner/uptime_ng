@@ -8,7 +8,7 @@ import CreateMonitorDialog from '@/components/CreateMonitorDialog.vue'
 import ExportDialog from '@/components/ExportDialog.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import api from '@/api/http'
-import type { Monitor } from '@/stores/monitor'
+import type { Monitor, MonitorTreeNode } from '@/stores/monitor'
 
 const store = useMonitorStore()
 const router = useRouter()
@@ -17,6 +17,7 @@ const dialogVisible = ref(false)
 const editingMonitor = ref<Monitor | null>(null)
 const exportVisible = ref(false)
 const importVisible = ref(false)
+const treeRows = computed(() => store.buildMonitorTree())
 
 function handleCreate() {
   editingMonitor.value = null
@@ -57,10 +58,14 @@ async function handlePauseResume(monitor: Monitor) {
 }
 
 function goDetail(id: number) {
+  if (id === 0) return
   router.push(`/monitors/${id}`)
 }
 
-function getUrl(monitor: Monitor): string {
+function getUrl(monitor: MonitorTreeNode): string {
+  if (monitor.type === 'group') {
+    return monitor.id === 0 ? '未归入任何分组的监控项' : `${monitor.children?.length || 0} 个子项`
+  }
   if (monitor.url) return monitor.url
   if (monitor.type === 'ping') return monitor.hostname || '-'
   if (monitor.hostname && monitor.port) return `${monitor.hostname}:${monitor.port}`
@@ -117,9 +122,12 @@ function handleImported() {
     </div>
 
     <el-table
-      :data="store.monitors"
+      :data="treeRows"
       v-loading="store.loading"
       stripe
+      row-key="id"
+      default-expand-all
+      :tree-props="{ children: 'children' }"
       style="width: 100%"
       @row-click="(row: Monitor) => goDetail(row.id)"
     >
@@ -143,30 +151,32 @@ function handleImported() {
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="store.statusColor(
-            store.statusList.find(s => s.id === row.id)?.status ?? 2
+            store.statusByID(row.id)?.status ?? 2
           )" size="small" effect="dark">
             {{ store.statusText(
-              store.statusList.find(s => s.id === row.id)?.status ?? 2
+              store.statusByID(row.id)?.status ?? 2
             ) }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="间隔" width="80">
         <template #default="{ row }">
-          {{ getIntervalText(row.interval) }}
+          {{ row.type === 'group' ? '-' : getIntervalText(row.interval) }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click.stop="handleEdit(row)">编辑</el-button>
-          <el-button
-            size="small"
-            :type="row.active ? 'warning' : 'success'"
-            @click.stop="handlePauseResume(row)"
-          >
-            {{ row.active ? '暂停' : '恢复' }}
-          </el-button>
-          <el-button size="small" type="danger" @click.stop="handleDelete(row)">删除</el-button>
+          <template v-if="row.id !== 0">
+            <el-button size="small" @click.stop="handleEdit(row)">编辑</el-button>
+            <el-button
+              size="small"
+              :type="row.active ? 'warning' : 'success'"
+              @click.stop="handlePauseResume(row)"
+            >
+              {{ row.active ? '暂停' : '恢复' }}
+            </el-button>
+            <el-button size="small" type="danger" @click.stop="handleDelete(row)">删除</el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>

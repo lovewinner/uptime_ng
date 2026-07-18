@@ -2,19 +2,19 @@ import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import api from '@/api/http'
 import { wsClient } from '@/api/ws'
-import type { Heartbeat, Monitor as ApiMonitor, MonitorListItem, MonitorPayload, Notification } from '@/api/types'
+import type {
+  Heartbeat,
+  Monitor as ApiMonitor,
+  MonitorListItem,
+  MonitorPayload,
+  MonitorStatus,
+  Notification,
+} from '@/api/types'
 
-export interface MonitorStatus {
-  id: number
-  name: string
-  type: string
-  status: number // 0=DOWN 1=UP 2=PENDING
-  ping_ms: number
-  uptime_24h: number
-  active: boolean
-}
+export type { MonitorStatus }
 
 export type Monitor = Omit<ApiMonitor, 'accepted_status_codes'> & { accepted_status_codes: string[] }
+export type MonitorTreeNode = Monitor & { children?: MonitorTreeNode[] }
 
 export const useMonitorStore = defineStore('monitor', () => {
   const statusList = reactive<MonitorStatus[]>([])
@@ -107,6 +107,115 @@ export const useMonitorStore = defineStore('monitor', () => {
     }
   }
 
+  function buildMonitorTree(items: Monitor[] = monitors.value): MonitorTreeNode[] {
+    const nodes = new Map<number, MonitorTreeNode>()
+    items.forEach((monitor) => {
+      nodes.set(monitor.id, { ...monitor, children: [] })
+    })
+
+    const roots: MonitorTreeNode[] = []
+    const orphans: MonitorTreeNode[] = []
+    nodes.forEach((node) => {
+      if (node.group_id && nodes.has(node.group_id)) {
+        nodes.get(node.group_id)!.children!.push(node)
+      } else if (node.type === 'group') {
+        roots.push(node)
+      } else {
+        orphans.push(node)
+      }
+    })
+
+    if (orphans.length > 0) {
+      roots.push({
+        id: 0,
+        user_id: 0,
+        name: '未分组',
+        description: '',
+        type: 'group',
+        group_id: null,
+        active: true,
+        url: '',
+        hostname: '',
+        port: 0,
+        method: '',
+        interval: 0,
+        timeout: 0,
+        max_retries: 0,
+        retry_interval: 0,
+        resend_interval: 0,
+        headers: '',
+        body: '',
+        keyword: '',
+        invert_keyword: false,
+        ignore_tls: false,
+        upside_down: false,
+        max_redirects: 0,
+        auth_method: '',
+        basic_auth_user: '',
+        auth_workstation: '',
+        auth_domain: '',
+        tls_ca: '',
+        oauth_token_url: '',
+        oauth_scopes: '',
+        oauth_auth_method: '',
+        oauth_audience: '',
+        dns_resolve_type: '',
+        dns_resolve_server: '',
+        http_body_encoding: '',
+        retry_only_on_status_code: false,
+        cache_bust: false,
+        save_response: false,
+        save_error_response: false,
+        response_max_length: 0,
+        ping_count: 0,
+        ping_per_request_timeout: 0,
+        accepted_status_codes: [],
+        notification_ids: [],
+        tags: [],
+        children: orphans,
+      })
+    }
+
+    return roots
+  }
+
+  function groupOptions(excludeID?: number): Monitor[] {
+    const excluded = new Set<number>()
+    if (excludeID) {
+      collectDescendants(excludeID, excluded)
+      excluded.add(excludeID)
+    }
+    return monitors.value.filter((m) => m.type === 'group' && !excluded.has(m.id))
+  }
+
+  function groupLabel(group: Monitor): string {
+    const names = [group.name]
+    let currentID = group.group_id
+    const seen = new Set<number>([group.id])
+    while (currentID) {
+      if (seen.has(currentID)) break
+      seen.add(currentID)
+      const parent = monitors.value.find((m) => m.id === currentID)
+      if (!parent) break
+      names.unshift(parent.name)
+      currentID = parent.group_id
+    }
+    return names.join(' / ')
+  }
+
+  function statusByID(id: number): MonitorStatus | undefined {
+    return statusList.find((s) => s.id === id)
+  }
+
+  function collectDescendants(id: number, out: Set<number>) {
+    monitors.value.forEach((m) => {
+      if (m.group_id === id && !out.has(m.id)) {
+        out.add(m.id)
+        collectDescendants(m.id, out)
+      }
+    })
+  }
+
   function statusColor(status: number): 'success' | 'danger' | 'warning' | 'info' {
     switch (status) {
       case 1: return 'success'
@@ -129,6 +238,6 @@ export const useMonitorStore = defineStore('monitor', () => {
     statusList, monitors, notifications, loading,
     fetchStatus, fetchMonitors, fetchNotifications,
     createMonitor, updateMonitor, deleteMonitor, pauseMonitor, resumeMonitor,
-    statusColor, statusText, parseCodes,
+    statusColor, statusText, parseCodes, buildMonitorTree, groupOptions, groupLabel, statusByID,
   }
 })

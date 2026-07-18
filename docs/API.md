@@ -86,6 +86,7 @@ Core fields:
 {
   "name": "Website",
   "type": "http",
+  "group_id": null,
   "url": "https://example.com",
   "hostname": "example.com",
   "port": 443,
@@ -100,6 +101,8 @@ Core fields:
   "tag_colors": ["#409EFF"]
 }
 ```
+
+`type` may be `http`, `tcp`, `ping`, `dns`, `push`, or `group`. Group monitors are containers, do not run checks, and can be nested through `group_id`.
 
 HTTP fields:
 
@@ -178,8 +181,10 @@ Sets `active=true` and starts the scheduler runner.
 Response:
 
 ```json
-[{"id":1,"name":"Website","type":"http","status":1,"ping_ms":42,"uptime_24h":0.999,"active":true}]
+[{"id":1,"name":"Website","type":"http","group_id":null,"status":1,"ping_ms":42,"uptime_24h":0.999,"active":true}]
 ```
+
+Group status is aggregated recursively: any child `DOWN` makes the group `DOWN`; otherwise any child `PENDING` makes it `PENDING`; otherwise a group with `UP` children is `UP`; an empty group is `PENDING`.
 
 ### `GET /monitors/:id/beats?period=3600`
 
@@ -259,7 +264,7 @@ Sends a real test message. Returns `400` for invalid config and `502` for provid
 
 ### `GET /monitors/export?ids=[1,2]`
 
-Exports monitors, tags, linked notification names, and referenced notifications. Sensitive config keys are masked.
+Exports monitors, `group_path`, tags, linked notification names, and referenced notifications. Sensitive config keys are masked. Import restores groups from `group_path` before assigning child monitors.
 
 ### `POST /monitors/import/preview`
 

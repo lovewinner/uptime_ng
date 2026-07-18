@@ -9,28 +9,29 @@ import (
 )
 
 const (
-	StatusDown      uint16 = 0
-	StatusUP        uint16 = 1
-	StatusPending   uint16 = 2
+	StatusDown        uint16 = 0
+	StatusUP          uint16 = 1
+	StatusPending     uint16 = 2
 	StatusMaintenance uint16 = 3
 
 	RoleAdmin = "admin"
 	RoleUser  = "user"
 
-	MonitorTypeHTTP = "http"
-	MonitorTypeTCP  = "tcp"
-	MonitorTypePing = "ping"
-	MonitorTypeDNS  = "dns"
-	MonitorTypePush = "push"
+	MonitorTypeHTTP  = "http"
+	MonitorTypeTCP   = "tcp"
+	MonitorTypePing  = "ping"
+	MonitorTypeDNS   = "dns"
+	MonitorTypePush  = "push"
+	MonitorTypeGroup = "group"
 
-	DefaultInterval     = 60
-	MinInterval         = 3
-	DefaultTimeout      = 30.0
-	DefaultPingCount    = 4
-	DefaultPingPacketSize = 56
+	DefaultInterval         = 60
+	MinInterval             = 3
+	DefaultTimeout          = 30.0
+	DefaultPingCount        = 4
+	DefaultPingPacketSize   = 56
 	DefaultHTTPMaxRedirects = 10
-	DefaultRetryInterval  = 60
-	DefaultResponseMaxLen = 4096
+	DefaultRetryInterval    = 60
+	DefaultResponseMaxLen   = 4096
 
 	MinutelyKeepHours = 24
 	HourlyKeepDays    = 30

@@ -39,7 +39,11 @@ const descColumns = computed(() => windowWidth.value < 640 ? 1 : windowWidth.val
 const monitor = ref<Monitor | null>(null)
 const currentStatus = computed(() => {
   if (!monitor.value) return 2
-  return store.statusList.find((s) => s.id === monitor.value?.id)?.status ?? 2
+  return store.statusByID(monitor.value.id)?.status ?? 2
+})
+const childMonitors = computed(() => {
+  if (!monitor.value) return []
+  return store.monitors.filter((item) => item.group_id === monitor.value?.id)
 })
 const incidentList = ref<Incident[]>([])
 const pingChartData = ref<UptimeDataPoint[]>([])
@@ -166,10 +170,15 @@ onMounted(async () => {
   loading.value = true
   try {
     await store.fetchStatus()
+    await store.fetchMonitors()
     const id = monitorId.value
 
     const res = await api.get(`/monitors/${id}`)
     monitor.value = res.data.monitor
+
+    if (monitor.value?.type === 'group') {
+      return
+    }
 
     const [pingRes, uptimeRes, incidentsRes, summaryRes] = await Promise.all([
       api.get(`/monitors/${id}/uptime/data`, { params: { granularity: 'hourly', num: 24 } }),
@@ -200,6 +209,7 @@ onMounted(async () => {
   }
 
   await nextTick()
+  if (monitor.value?.type === 'group') return
   if (beatsContainer.value?.$el) {
     containerWidth.value = beatsContainer.value.$el.clientWidth
     beatsObserver = new ResizeObserver(entries => {
@@ -224,13 +234,13 @@ onMounted(async () => {
         <el-descriptions-item label="类型">
           <el-tag size="small">{{ monitor.type.toUpperCase() }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item :label="monitor.type === 'ping' ? '主机名' : 'URL / 主机名'">
+        <el-descriptions-item v-if="monitor.type !== 'group'" :label="monitor.type === 'ping' ? '主机名' : 'URL / 主机名'">
           {{ monitor.url || monitor.hostname || '-' }}
         </el-descriptions-item>
-        <el-descriptions-item label="检查间隔">
+        <el-descriptions-item v-if="monitor.type !== 'group'" label="检查间隔">
           {{ monitor.interval }}s
         </el-descriptions-item>
-        <el-descriptions-item label="超时">
+        <el-descriptions-item v-if="monitor.type !== 'group'" label="超时">
           {{ monitor.timeout }}s
         </el-descriptions-item>
         <el-descriptions-item label="状态">
@@ -249,28 +259,51 @@ onMounted(async () => {
         </el-descriptions-item>
       </el-descriptions>
 
-      <el-row :gutter="20" style="margin-bottom: 24px">
-        <el-col :xs="24" :md="12">
-          <el-card shadow="never">
-            <template #header>
-              <span>24小时响应时间</span>
+      <el-card v-if="monitor.type === 'group'" shadow="never">
+        <template #header>
+          <span>子监控</span>
+        </template>
+        <el-table :data="childMonitors" size="small" stripe>
+          <el-table-column prop="name" label="名称" min-width="160" />
+          <el-table-column prop="type" label="类型" width="90">
+            <template #default="{ row }">
+              <el-tag size="small">{{ row.type.toUpperCase() }}</el-tag>
             </template>
-            <VChart v-if="pingChartData.length > 0" :option="pingChartOption" style="height: 280px" autoresize />
-            <el-empty v-else description="暂无响应时间数据" :image-size="80" />
-          </el-card>
-        </el-col>
-        <el-col :xs="24" :md="12">
-          <el-card shadow="never">
-            <template #header>
-              <span>30天可用率</span>
+          </el-table-column>
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <el-tag :type="store.statusColor(store.statusByID(row.id)?.status ?? 2)" size="small" effect="dark">
+                {{ store.statusText(store.statusByID(row.id)?.status ?? 2) }}
+              </el-tag>
             </template>
-            <VChart v-if="uptimeChartData.length > 0" :option="uptimeChartOption" style="height: 280px" autoresize />
-            <el-empty v-else description="暂无可用率数据" :image-size="80" />
-          </el-card>
-        </el-col>
-      </el-row>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="childMonitors.length === 0" description="暂无子监控" :image-size="60" />
+      </el-card>
 
-      <el-card shadow="never" style="margin-bottom: 24px">
+      <template v-else>
+        <el-row :gutter="20" style="margin-bottom: 24px">
+          <el-col :xs="24" :md="12">
+            <el-card shadow="never">
+              <template #header>
+                <span>24小时响应时间</span>
+              </template>
+              <VChart v-if="pingChartData.length > 0" :option="pingChartOption" style="height: 280px" autoresize />
+              <el-empty v-else description="暂无响应时间数据" :image-size="80" />
+            </el-card>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-card shadow="never">
+              <template #header>
+                <span>30天可用率</span>
+              </template>
+              <VChart v-if="uptimeChartData.length > 0" :option="uptimeChartOption" style="height: 280px" autoresize />
+              <el-empty v-else description="暂无可用率数据" :image-size="80" />
+            </el-card>
+          </el-col>
+        </el-row>
+
+        <el-card shadow="never" style="margin-bottom: 24px">
         <template #header>
           <span>最近心跳记录（{{ beatCount }}格）</span>
         </template>
@@ -326,6 +359,7 @@ onMounted(async () => {
         </el-table>
         <el-empty v-if="incidentList.length === 0" description="暂无故障事件" :image-size="60" />
       </el-card>
+      </template>
     </template>
 
     <el-empty v-else description="监控项不存在" />

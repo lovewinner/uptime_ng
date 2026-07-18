@@ -50,6 +50,10 @@ func (h *SLAHandler) GetUptime(c *gin.Context) {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
+	if monitor.Type == model.MonitorTypeGroup {
+		badRequest(c, "group_sla_unsupported", "group SLA is not supported")
+		return
+	}
 
 	result := SLAResult{
 		MonitorID:   monitor.ID,
@@ -74,7 +78,7 @@ func (h *SLAHandler) GetOverall(c *gin.Context) {
 	periodStart, periodEnd := periodRange(periodType, time.Now())
 
 	var monitors []model.Monitor
-	h.DB.Where("user_id = ?", userID).Find(&monitors)
+	h.DB.Where("user_id = ? AND type <> ?", userID, model.MonitorTypeGroup).Find(&monitors)
 
 	results := make([]SLAResult, len(monitors))
 
@@ -120,6 +124,10 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		return
+	}
+	if monitor.Type == model.MonitorTypeGroup {
+		badRequest(c, "group_sla_unsupported", "group SLA is not supported")
 		return
 	}
 
@@ -188,6 +196,10 @@ func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
+		return
+	}
+	if monitor.Type == model.MonitorTypeGroup {
+		badRequest(c, "group_sla_unsupported", "group SLA is not supported")
 		return
 	}
 

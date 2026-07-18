@@ -56,6 +56,10 @@ func (s *Scheduler) StartAll() error {
 }
 
 func (s *Scheduler) StartMonitor(monitor *model.Monitor) {
+	if monitor.Type == model.MonitorTypeGroup {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -130,7 +134,7 @@ func (s *Scheduler) RunningCount() int {
 }
 
 func (r *MonitorRunner) run() {
-	if r.Monitor.Type == model.MonitorTypePush {
+	if r.Monitor.Type == model.MonitorTypePush || r.Monitor.Type == model.MonitorTypeGroup {
 		return
 	}
 

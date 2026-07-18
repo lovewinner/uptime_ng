@@ -34,6 +34,7 @@ type ExportMonitor struct {
 	Description           string      `json:"description"`
 	Type                  string      `json:"type"`
 	Active                bool        `json:"active"`
+	GroupPath             []string    `json:"group_path"`
 	URL                   string      `json:"url"`
 	Hostname              string      `json:"hostname"`
 	Port                  uint16      `json:"port"`
@@ -174,6 +175,7 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 			Description:           m.Description,
 			Type:                  m.Type,
 			Active:                m.Active,
+			GroupPath:             h.groupPath(userID.(uint), m.GroupID),
 			URL:                   m.URL,
 			Hostname:              m.Hostname,
 			Port:                  m.Port,
@@ -329,8 +331,15 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 	}
 
 	for _, em := range req.Data.Monitors {
+		groupID, err := ensureGroupPath(tx, userID.(uint), em.GroupPath)
+		if err != nil {
+			result.Errors = append(result.Errors, "failed to prepare group for "+em.Name+": "+err.Error())
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, result)
+			return
+		}
 		var existing model.Monitor
-		err := tx.Where("user_id = ? AND name = ?", userID, em.Name).First(&existing).Error
+		err = tx.Where("user_id = ? AND name = ?", userID, em.Name).First(&existing).Error
 
 		if err == nil {
 			switch req.Strategy {
@@ -339,6 +348,7 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 				continue
 			case "overwrite":
 				existing = applyExportMonitor(existing, em)
+				existing.GroupID = groupID
 				if err := tx.Save(&existing).Error; err != nil {
 					result.Errors = append(result.Errors, "failed to update "+em.Name+": "+err.Error())
 					tx.Rollback()
@@ -353,7 +363,7 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 				fallthrough
 			default:
 				result.Created++
-				monitor := newMonitorFromExport(userID.(uint), em)
+				monitor := newMonitorFromExport(userID.(uint), em, groupID)
 				if err := tx.Create(&monitor).Error; err != nil {
 					result.Errors = append(result.Errors, "failed to create "+em.Name+": "+err.Error())
 					tx.Rollback()
@@ -365,7 +375,7 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 			}
 		} else {
 			result.Created++
-			monitor := newMonitorFromExport(userID.(uint), em)
+			monitor := newMonitorFromExport(userID.(uint), em, groupID)
 			if err := tx.Create(&monitor).Error; err != nil {
 				result.Errors = append(result.Errors, "failed to create "+em.Name+": "+err.Error())
 				continue
@@ -381,7 +391,9 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 	}
 	if h.Scheduler != nil {
 		for i := range importedMonitors {
-			if importedMonitors[i].Active {
+			if importedMonitors[i].Type == model.MonitorTypeGroup {
+				h.Scheduler.StopMonitor(importedMonitors[i].ID)
+			} else if importedMonitors[i].Active {
 				h.Scheduler.RestartMonitor(&importedMonitors[i])
 			} else {
 				h.Scheduler.StopMonitor(importedMonitors[i].ID)
@@ -392,13 +404,14 @@ func (h *ImportExportHandler) ImportExecute(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-func newMonitorFromExport(userID uint, em ExportMonitor) model.Monitor {
+func newMonitorFromExport(userID uint, em ExportMonitor, groupID *uint) model.Monitor {
 	codesJSON, _ := json.Marshal(em.AcceptedStatusCodes)
 	return model.Monitor{
 		UserID:                userID,
 		Name:                  em.Name,
 		Description:           em.Description,
 		Type:                  em.Type,
+		GroupID:               groupID,
 		Active:                em.Active,
 		URL:                   em.URL,
 		Hostname:              em.Hostname,
@@ -485,6 +498,72 @@ func applyExportMonitor(existing model.Monitor, em ExportMonitor) model.Monitor 
 	existing.PingCount = em.PingCount
 	existing.PingPerRequestTimeout = em.PingPerRequestTimeout
 	return existing
+}
+
+func (h *ImportExportHandler) groupPath(userID uint, groupID *uint) []string {
+	if groupID == nil {
+		return nil
+	}
+	path := []string{}
+	seen := map[uint]bool{}
+	current := *groupID
+	for current != 0 {
+		if seen[current] {
+			break
+		}
+		seen[current] = true
+		var group model.Monitor
+		if err := h.DB.Select("id", "name", "group_id").Where("id = ? AND user_id = ? AND type = ?", current, userID, model.MonitorTypeGroup).First(&group).Error; err != nil {
+			break
+		}
+		path = append([]string{group.Name}, path...)
+		if group.GroupID == nil {
+			break
+		}
+		current = *group.GroupID
+	}
+	return path
+}
+
+func ensureGroupPath(tx *gorm.DB, userID uint, path []string) (*uint, error) {
+	var parentID *uint
+	for _, rawName := range path {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			continue
+		}
+		var group model.Monitor
+		query := tx.Where("user_id = ? AND name = ? AND type = ?", userID, name, model.MonitorTypeGroup)
+		if parentID == nil {
+			query = query.Where("group_id IS NULL")
+		} else {
+			query = query.Where("group_id = ?", *parentID)
+		}
+		if err := query.First(&group).Error; err == nil {
+			id := group.ID
+			parentID = &id
+			continue
+		}
+		group = model.Monitor{
+			UserID:              userID,
+			Name:                name,
+			Type:                model.MonitorTypeGroup,
+			GroupID:             parentID,
+			Active:              true,
+			Interval:            model.DefaultInterval,
+			Timeout:             model.DefaultTimeout,
+			AcceptedStatusCodes: `["200-299"]`,
+			ExpiryNotification:  true,
+			ResponseMaxLength:   model.DefaultResponseMaxLen,
+			PingCount:           model.DefaultPingCount,
+		}
+		if err := tx.Create(&group).Error; err != nil {
+			return nil, err
+		}
+		id := group.ID
+		parentID = &id
+	}
+	return parentID, nil
 }
 
 func attachTagsAndNotifs(tx *gorm.DB, monitor *model.Monitor, em ExportMonitor) {

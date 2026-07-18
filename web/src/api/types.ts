@@ -9,7 +9,8 @@ export interface Monitor {
   user_id: number
   name: string
   description: string
-  type: 'http' | 'tcp' | 'ping' | 'dns' | 'push'
+  type: 'http' | 'tcp' | 'ping' | 'dns' | 'push' | 'group'
+  group_id: number | null
   active: boolean
   url: string
   hostname: string
@@ -65,6 +66,7 @@ export interface MonitorPayload {
   name: string
   description: string
   type: string
+  group_id: number | null
   url: string
   hostname: string
   port: number
@@ -119,6 +121,17 @@ export interface Heartbeat {
   http_status: number
   important: boolean
   time: string
+}
+
+export interface MonitorStatus {
+  id: number
+  name: string
+  type: string
+  group_id: number | null
+  status: number
+  ping_ms: number
+  uptime_24h: number
+  active: boolean
 }
 
 export interface Incident {

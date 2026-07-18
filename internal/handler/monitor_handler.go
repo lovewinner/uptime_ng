@@ -29,6 +29,7 @@ type CreateMonitorRequest struct {
 	Name                  string   `json:"name" binding:"required"`
 	Description           string   `json:"description"`
 	Type                  string   `json:"type" binding:"required"`
+	GroupID               *uint    `json:"group_id"`
 	URL                   string   `json:"url"`
 	Hostname              string   `json:"hostname"`
 	Port                  uint16   `json:"port"`
@@ -99,6 +100,10 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 	if req.MaxRedirects == 0 {
 		req.MaxRedirects = model.DefaultHTTPMaxRedirects
 	}
+	if err := h.validateMonitorRequest(userID.(uint), 0, req); err != nil {
+		badRequest(c, err.code, err.message)
+		return
+	}
 
 	var acceptedStatusCodesJSON string
 	if len(req.AcceptedStatusCodes) > 0 {
@@ -118,6 +123,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		Name:                  req.Name,
 		Description:           req.Description,
 		Type:                  req.Type,
+		GroupID:               req.GroupID,
 		Active:                true,
 		URL:                   req.URL,
 		Hostname:              req.Hostname,
@@ -180,9 +186,11 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 
-	for _, nid := range req.NotificationIDs {
-		mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
-		tx.Create(&mn)
+	if monitor.Type != model.MonitorTypeGroup {
+		for _, nid := range req.NotificationIDs {
+			mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
+			tx.Create(&mn)
+		}
 	}
 
 	for i, tagName := range req.TagNames {
@@ -207,7 +215,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if monitor.Active && h.Scheduler != nil {
+	if monitor.Active && monitor.Type != model.MonitorTypeGroup && h.Scheduler != nil {
 		h.Scheduler.StartMonitor(&monitor)
 	}
 
@@ -305,10 +313,16 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	if req.MaxRedirects == 0 {
 		req.MaxRedirects = model.DefaultHTTPMaxRedirects
 	}
+	if err := h.validateMonitorRequest(userID.(uint), monitor.ID, req); err != nil {
+		badRequest(c, err.code, err.message)
+		return
+	}
 
+	wasGroup := monitor.Type == model.MonitorTypeGroup
 	monitor.Name = req.Name
 	monitor.Description = req.Description
 	monitor.Type = req.Type
+	monitor.GroupID = req.GroupID
 	monitor.URL = req.URL
 	monitor.Hostname = req.Hostname
 	monitor.Port = req.Port
@@ -362,17 +376,22 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	}
 
 	tx := h.DB.Begin()
+	if wasGroup && monitor.Type != model.MonitorTypeGroup {
+		tx.Model(&model.Monitor{}).Where("group_id = ?", monitor.ID).Update("group_id", nil)
+	}
 	if err := tx.Save(&monitor).Error; err != nil {
 		tx.Rollback()
 		errorResponse(c, http.StatusInternalServerError, "monitor_update_failed", err.Error())
 		return
 	}
 
-	if req.NotificationIDs != nil {
+	if req.NotificationIDs != nil || monitor.Type == model.MonitorTypeGroup {
 		tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorNotification{})
-		for _, nid := range req.NotificationIDs {
-			mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
-			tx.Create(&mn)
+		if monitor.Type != model.MonitorTypeGroup {
+			for _, nid := range req.NotificationIDs {
+				mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
+				tx.Create(&mn)
+			}
 		}
 	}
 
@@ -401,9 +420,12 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 	}
 
 	if h.Scheduler != nil {
-		if monitor.Active {
+		if wasGroup || monitor.Type == model.MonitorTypeGroup {
+			h.Scheduler.StopMonitor(monitor.ID)
+		}
+		if monitor.Active && monitor.Type != model.MonitorTypeGroup {
 			h.Scheduler.RestartMonitor(&monitor)
-		} else {
+		} else if monitor.Type != model.MonitorTypeGroup {
 			h.Scheduler.StopMonitor(monitor.ID)
 		}
 	}
@@ -429,6 +451,7 @@ func (h *MonitorHandler) Delete(c *gin.Context) {
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatHourly{})
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.StatDaily{})
 	tx.Where("monitor_id = ?", monitorID).Delete(&model.Incident{})
+	tx.Model(&model.Monitor{}).Where("group_id = ?", monitor.ID).Update("group_id", nil)
 	tx.Delete(&monitor)
 	if err := tx.Commit().Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_delete_failed", err.Error())
@@ -456,7 +479,7 @@ func (h *MonitorHandler) Resume(c *gin.Context) {
 		return
 	}
 	monitor.Active = true
-	if h.Scheduler != nil {
+	if h.Scheduler != nil && monitor.Type != model.MonitorTypeGroup {
 		h.Scheduler.StartMonitor(&monitor)
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "monitor resumed"})
@@ -479,4 +502,63 @@ func (h *MonitorHandler) Pause(c *gin.Context) {
 		h.Scheduler.StopMonitor(monitor.ID)
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "monitor paused"})
+}
+
+type monitorValidationError struct {
+	code    string
+	message string
+}
+
+func (h *MonitorHandler) validateMonitorRequest(userID uint, monitorID uint, req CreateMonitorRequest) *monitorValidationError {
+	if !isValidMonitorType(req.Type) {
+		return &monitorValidationError{code: "invalid_monitor_type", message: "type must be http, tcp, ping, dns, push or group"}
+	}
+	if req.GroupID == nil {
+		return nil
+	}
+	if monitorID != 0 && *req.GroupID == monitorID {
+		return &monitorValidationError{code: "invalid_group", message: "monitor cannot be its own group"}
+	}
+
+	var parent model.Monitor
+	if err := h.DB.Where("id = ? AND user_id = ? AND type = ?", *req.GroupID, userID, model.MonitorTypeGroup).First(&parent).Error; err != nil {
+		return &monitorValidationError{code: "invalid_group", message: "group_id must reference a group monitor owned by the current user"}
+	}
+	if monitorID != 0 && h.wouldCreateGroupCycle(userID, monitorID, parent.ID) {
+		return &monitorValidationError{code: "group_cycle", message: "group hierarchy cannot contain cycles"}
+	}
+	return nil
+}
+
+func isValidMonitorType(monitorType string) bool {
+	switch monitorType {
+	case model.MonitorTypeHTTP, model.MonitorTypeTCP, model.MonitorTypePing, model.MonitorTypeDNS, model.MonitorTypePush, model.MonitorTypeGroup:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *MonitorHandler) wouldCreateGroupCycle(userID uint, monitorID uint, parentID uint) bool {
+	seen := map[uint]bool{}
+	current := parentID
+	for current != 0 {
+		if current == monitorID {
+			return true
+		}
+		if seen[current] {
+			return true
+		}
+		seen[current] = true
+
+		var parent model.Monitor
+		if err := h.DB.Select("id", "group_id").Where("id = ? AND user_id = ?", current, userID).First(&parent).Error; err != nil {
+			return false
+		}
+		if parent.GroupID == nil {
+			return false
+		}
+		current = *parent.GroupID
+	}
+	return false
 }

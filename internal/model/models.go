@@ -7,48 +7,49 @@ import (
 )
 
 type User struct {
-	ID        uint           `gorm:"primaryKey" json:"id"`
-	Username  string         `gorm:"uniqueIndex;not null;size:64" json:"username"`
-	Password  string         `gorm:"not null" json:"-"` // bcrypt hash, never serialize
-	Role      string         `gorm:"default:'user';size:20" json:"role"` // admin / user
-	Active    bool           `gorm:"default:true" json:"active"`
-	Timezone  string         `gorm:"size:50" json:"timezone"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Username  string    `gorm:"uniqueIndex;not null;size:64" json:"username"`
+	Password  string    `gorm:"not null" json:"-"`                  // bcrypt hash, never serialize
+	Role      string    `gorm:"default:'user';size:20" json:"role"` // admin / user
+	Active    bool      `gorm:"default:true" json:"active"`
+	Timezone  string    `gorm:"size:50" json:"timezone"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Monitor struct {
-	ID                uint           `gorm:"primaryKey" json:"id"`
-	UserID            uint           `gorm:"index;not null" json:"user_id"`
-	Name              string         `gorm:"not null;size:150" json:"name"`
-	Description       string         `gorm:"size:500" json:"description"`
-	Type              string         `gorm:"not null;size:20" json:"type"` // http, tcp, ping, dns
-	Active            bool           `gorm:"default:true" json:"active"`
-	URL               string         `gorm:"size:2000" json:"url"`
-	Hostname          string         `gorm:"size:255" json:"hostname"`
-	Port              uint16         `gorm:"default:0" json:"port"`
-	Method            string         `gorm:"default:'GET';size:10" json:"method"`
-	Interval          uint32         `gorm:"default:60" json:"interval"` // seconds, min 3
-	Timeout           float64        `gorm:"default:30" json:"timeout"`
-	MaxRetries        uint32         `gorm:"default:0" json:"max_retries"`
-	RetryInterval     uint32         `gorm:"default:0" json:"retry_interval"`
-	ResendInterval    uint32         `gorm:"default:0" json:"resend_interval"`
+	ID             uint    `gorm:"primaryKey" json:"id"`
+	UserID         uint    `gorm:"index;not null" json:"user_id"`
+	Name           string  `gorm:"not null;size:150" json:"name"`
+	Description    string  `gorm:"size:500" json:"description"`
+	Type           string  `gorm:"not null;size:20" json:"type"` // http, tcp, ping, dns, push, group
+	GroupID        *uint   `gorm:"index" json:"group_id"`
+	Active         bool    `gorm:"default:true" json:"active"`
+	URL            string  `gorm:"size:2000" json:"url"`
+	Hostname       string  `gorm:"size:255" json:"hostname"`
+	Port           uint16  `gorm:"default:0" json:"port"`
+	Method         string  `gorm:"default:'GET';size:10" json:"method"`
+	Interval       uint32  `gorm:"default:60" json:"interval"` // seconds, min 3
+	Timeout        float64 `gorm:"default:30" json:"timeout"`
+	MaxRetries     uint32  `gorm:"default:0" json:"max_retries"`
+	RetryInterval  uint32  `gorm:"default:0" json:"retry_interval"`
+	ResendInterval uint32  `gorm:"default:0" json:"resend_interval"`
 
-	Headers            string         `gorm:"type:text" json:"headers"`              // JSON string
-	Body               string         `gorm:"type:text" json:"body"`
-	AcceptedStatusCodes string        `gorm:"type:text;default:'[\"200-299\"]'" json:"accepted_status_codes"`
-	Keyword            string         `gorm:"size:255" json:"keyword"`
-	InvertKeyword      bool           `gorm:"default:false" json:"invert_keyword"`
-	IgnoreTLS          bool           `gorm:"default:false" json:"ignore_tls"`
-	UpsideDown         bool           `gorm:"default:false" json:"upside_down"`
-	MaxRedirects       uint32         `gorm:"default:10" json:"max_redirects"`
+	Headers             string `gorm:"type:text" json:"headers"` // JSON string
+	Body                string `gorm:"type:text" json:"body"`
+	AcceptedStatusCodes string `gorm:"type:text;default:'[\"200-299\"]'" json:"accepted_status_codes"`
+	Keyword             string `gorm:"size:255" json:"keyword"`
+	InvertKeyword       bool   `gorm:"default:false" json:"invert_keyword"`
+	IgnoreTLS           bool   `gorm:"default:false" json:"ignore_tls"`
+	UpsideDown          bool   `gorm:"default:false" json:"upside_down"`
+	MaxRedirects        uint32 `gorm:"default:10" json:"max_redirects"`
 
-	AuthMethod     string `gorm:"size:20" json:"auth_method"` // basic, bearer, oauth2-cc, ntlm, mtls
-	BasicAuthUser  string `gorm:"size:255" json:"basic_auth_user"`
-	BasicAuthPass  string `gorm:"size:255" json:"-"` // sensitive
-	BearerToken    string `gorm:"size:2000" json:"-"`
+	AuthMethod      string `gorm:"size:20" json:"auth_method"` // basic, bearer, oauth2-cc, ntlm, mtls
+	BasicAuthUser   string `gorm:"size:255" json:"basic_auth_user"`
+	BasicAuthPass   string `gorm:"size:255" json:"-"` // sensitive
+	BearerToken     string `gorm:"size:2000" json:"-"`
 	AuthWorkstation string `gorm:"size:255" json:"auth_workstation"`
-	AuthDomain     string `gorm:"size:255" json:"auth_domain"`
+	AuthDomain      string `gorm:"size:255" json:"auth_domain"`
 
 	TLSKey  string `gorm:"type:text" json:"-"`
 	TLSCert string `gorm:"type:text" json:"-"`
@@ -85,18 +86,18 @@ type Monitor struct {
 }
 
 type Heartbeat struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	MonitorID uint      `gorm:"index;not null" json:"monitor_id"`
-	Status    uint16    `gorm:"not null" json:"status"` // 0=DOWN 1=UP 2=PENDING
-	Msg       string    `gorm:"type:text" json:"msg"`
-	PingMS    *float64  `json:"ping_ms"`
-	HTTPStatus int16    `gorm:"default:0" json:"http_status"`
-	Important bool      `gorm:"default:false" json:"important"`
-	Retries   uint32    `gorm:"default:0" json:"retries"`
-	DownCount uint32    `gorm:"default:0" json:"down_count"`
-	Time      time.Time `gorm:"not null;index" json:"time"`
-	EndTime   time.Time `json:"end_time"`
-	Duration  uint32    `gorm:"default:0" json:"duration"`
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	MonitorID  uint      `gorm:"index;not null" json:"monitor_id"`
+	Status     uint16    `gorm:"not null" json:"status"` // 0=DOWN 1=UP 2=PENDING
+	Msg        string    `gorm:"type:text" json:"msg"`
+	PingMS     *float64  `json:"ping_ms"`
+	HTTPStatus int16     `gorm:"default:0" json:"http_status"`
+	Important  bool      `gorm:"default:false" json:"important"`
+	Retries    uint32    `gorm:"default:0" json:"retries"`
+	DownCount  uint32    `gorm:"default:0" json:"down_count"`
+	Time       time.Time `gorm:"not null;index" json:"time"`
+	EndTime    time.Time `json:"end_time"`
+	Duration   uint32    `gorm:"default:0" json:"duration"`
 }
 
 type StatMinutely struct {
@@ -164,15 +165,15 @@ type MonitorTag struct {
 }
 
 type Incident struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	MonitorID    uint      `gorm:"index;not null" json:"monitor_id"`
-	Title        string    `gorm:"not null;size:255" json:"title"`
-	Status       uint16    `gorm:"default:0" json:"status"` // 0=DOWN 1=UP
-	StartedAt    time.Time `gorm:"not null" json:"started_at"`
-	EndedAt      *time.Time `json:"ended_at"`
-	DurationSec  uint32    `gorm:"default:0" json:"duration_seconds"`
-	Msg          string    `gorm:"type:text" json:"msg"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID          uint       `gorm:"primaryKey" json:"id"`
+	MonitorID   uint       `gorm:"index;not null" json:"monitor_id"`
+	Title       string     `gorm:"not null;size:255" json:"title"`
+	Status      uint16     `gorm:"default:0" json:"status"` // 0=DOWN 1=UP
+	StartedAt   time.Time  `gorm:"not null" json:"started_at"`
+	EndedAt     *time.Time `json:"ended_at"`
+	DurationSec uint32     `gorm:"default:0" json:"duration_seconds"`
+	Msg         string     `gorm:"type:text" json:"msg"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 type SLAReport struct {

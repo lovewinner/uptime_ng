@@ -30,6 +30,7 @@ const form = ref<MonitorPayload>({
   name: '',
   description: '',
   type: 'http',
+  group_id: null,
   url: '',
   hostname: '',
   port: 80,
@@ -84,7 +85,10 @@ const typeOptions = [
   { label: 'TCP', value: 'tcp' },
   { label: 'PING', value: 'ping' },
   { label: 'DNS', value: 'dns' },
+  { label: 'GROUP', value: 'group' },
 ]
+
+const groupOptions = computed(() => store.groupOptions(props.monitor?.id))
 
 const methodOptions = [
   { label: 'GET', value: 'GET' },
@@ -141,6 +145,7 @@ watch(
         name: val.name || '',
         description: val.description || '',
         type: val.type || 'http',
+        group_id: val.group_id ?? null,
         url: val.url || '',
         hostname: val.hostname || '',
         port: val.port || 80,
@@ -191,6 +196,7 @@ watch(
         name: '',
         description: '',
         type: 'http',
+        group_id: null,
         url: '',
         hostname: '',
         port: 80,
@@ -250,6 +256,7 @@ async function handleSubmit() {
     const payload: MonitorPayload = {
       ...form.value,
       port: form.value.port || 0,
+      notification_ids: form.value.type === 'group' ? [] : form.value.notification_ids,
     }
     if (isEdit.value) {
       await store.updateMonitor(props.monitor!.id, payload)
@@ -312,6 +319,17 @@ function errorMessage(e: unknown, fallback: string): string {
         </el-select>
       </el-form-item>
 
+      <el-form-item label="父分组">
+        <el-select v-model="form.group_id" clearable placeholder="未分组" style="width: 100%">
+          <el-option
+            v-for="group in groupOptions"
+            :key="group.id"
+            :label="store.groupLabel(group)"
+            :value="group.id"
+          />
+        </el-select>
+      </el-form-item>
+
       <template v-if="form.type === 'http'">
         <el-form-item label="URL" prop="url" :rules="[{ required: true, message: '请输入URL' }]">
           <el-input v-model="form.url" placeholder="https://example.com" />
@@ -338,27 +356,28 @@ function errorMessage(e: unknown, fallback: string): string {
         </el-form-item>
       </template>
 
-      <el-divider content-position="left">检查配置</el-divider>
+      <template v-if="form.type !== 'group'">
+        <el-divider content-position="left">检查配置</el-divider>
 
-      <el-form-item label="检查间隔(s)">
-        <el-input-number v-model="form.interval" :min="3" :max="86400" />
-      </el-form-item>
+        <el-form-item label="检查间隔(s)">
+          <el-input-number v-model="form.interval" :min="3" :max="86400" />
+        </el-form-item>
 
-      <el-form-item label="超时(s)">
-        <el-input-number v-model="form.timeout" :min="1" :max="300" :precision="1" />
-      </el-form-item>
+        <el-form-item label="超时(s)">
+          <el-input-number v-model="form.timeout" :min="1" :max="300" :precision="1" />
+        </el-form-item>
 
-      <el-form-item label="最大重试">
-        <el-input-number v-model="form.max_retries" :min="0" :max="10" />
-      </el-form-item>
+        <el-form-item label="最大重试">
+          <el-input-number v-model="form.max_retries" :min="0" :max="10" />
+        </el-form-item>
 
-      <el-form-item label="重试间隔(s)">
-        <el-input-number v-model="form.retry_interval" :min="0" :max="86400" />
-      </el-form-item>
+        <el-form-item label="重试间隔(s)">
+          <el-input-number v-model="form.retry_interval" :min="0" :max="86400" />
+        </el-form-item>
 
-      <el-form-item label="重复告警(s)">
-        <el-input-number v-model="form.resend_interval" :min="0" :max="604800" />
-      </el-form-item>
+        <el-form-item label="重复告警(s)">
+          <el-input-number v-model="form.resend_interval" :min="0" :max="604800" />
+        </el-form-item>
 
       <el-form-item v-if="form.type === 'http'" label="关键词">
         <el-input v-model="form.keyword" placeholder="响应体中检测的关键词" />
@@ -528,16 +547,17 @@ function errorMessage(e: unknown, fallback: string): string {
         </el-form-item>
       </template>
 
-      <el-form-item label="关联通知">
-        <el-select v-model="form.notification_ids" multiple placeholder="选择通知配置" style="width: 100%">
-          <el-option
-            v-for="n in store.notifications"
-            :key="n.id"
-            :label="`${n.name} (${n.type})`"
-            :value="n.id"
-          />
-        </el-select>
-      </el-form-item>
+        <el-form-item label="关联通知">
+          <el-select v-model="form.notification_ids" multiple placeholder="选择通知配置" style="width: 100%">
+            <el-option
+              v-for="n in store.notifications"
+              :key="n.id"
+              :label="`${n.name} (${n.type})`"
+              :value="n.id"
+            />
+          </el-select>
+        </el-form-item>
+      </template>
     </el-form>
 
     <template #footer>
