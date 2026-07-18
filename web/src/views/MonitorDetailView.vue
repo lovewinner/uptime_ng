@@ -111,10 +111,24 @@ const pingChartOption = computed(() => ({
 }))
 
 const uptimeChartOption = computed(() => ({
-  tooltip: { trigger: 'axis' },
-  grid: { left: 50, right: 20, top: 30, bottom: 30 },
+  tooltip: {
+    trigger: 'axis',
+    formatter: (params: any) => {
+      const p = params[0]
+      if (!p) return ''
+      return `${p.name}<br/>可用率: ${(p.value * 100).toFixed(2)}%`
+    },
+  },
+  grid: { left: 55, right: 20, top: 30, bottom: 50 },
   xAxis: {
-    type: 'time',
+    type: 'category',
+    data: uptimeChartData.value.map((d: any) => {
+      const date = new Date(d.timestamp * 1000)
+      return (date.getMonth() + 1) + '月' + date.getDate() + '日'
+    }),
+    axisLabel: {
+      margin: 10,
+    },
   },
   yAxis: {
     type: 'value',
@@ -126,12 +140,9 @@ const uptimeChartOption = computed(() => ({
     {
       name: '可用率',
       type: 'bar',
-      data: uptimeChartData.value.map((d) => [
-        new Date(d.timestamp * 1000),
-        d.uptime !== undefined ? Number(d.uptime) : 0,
-      ]),
+      data: uptimeChartData.value.map((d: any) => d.uptime !== undefined ? Number(d.uptime) : 0),
       itemStyle: {
-        color: (params: { value: [Date, number] }) => params.value[1] > 0.99 ? '#67C23A' : params.value[1] > 0.95 ? '#E6A23C' : '#F56C6C',
+        color: (params: { value: number }) => params.value > 0.99 ? '#67C23A' : params.value > 0.95 ? '#409EFF' : params.value > 0.8 ? '#E6A23C' : '#F56C6C',
       },
     },
   ],
