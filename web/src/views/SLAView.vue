@@ -3,18 +3,7 @@ import { onMounted, ref, computed } from 'vue'
 import api from '@/api/http'
 import { useMonitorStore } from '@/stores/monitor'
 import { useRouter } from 'vue-router'
-
-interface SLAItem {
-  monitor_id: number
-  monitor_name: string
-  monitor_type: string
-  uptime_percentage: number
-  total_checks: number
-  failed_checks: number
-  avg_ping_ms: number
-  incidents: number
-  total_downtime_seconds: number
-}
+import { formatDowntime, uptimeClass, uptimePercent, type SLAItem } from './sla'
 
 const store = useMonitorStore()
 const router = useRouter()
@@ -29,27 +18,6 @@ const periodOptions = [
   { label: '本季度', value: 'quarter' },
   { label: '本年', value: 'year' },
 ]
-
-function uptimeClass(pct: number): string {
-  if (pct >= 0.999) return 'uptime-green'
-  if (pct >= 0.99) return 'uptime-yellow'
-  return 'uptime-red'
-}
-
-function uptimePercent(pct: number | undefined | null): string {
-  if (pct == null) return '-'
-  return (pct * 100).toFixed(3) + '%'
-}
-
-function formatDowntime(seconds: number): string {
-  if (seconds <= 0) return '-'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  if (h > 0) return `${h}h ${m}m ${s}s`
-  if (m > 0) return `${m}m ${s}s`
-  return `${s}s`
-}
 
 function goDetail(id: number) {
   router.push(`/monitors/${id}`)

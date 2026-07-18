@@ -50,7 +50,7 @@ func (c *TCPChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 		timeout = 10 * time.Second
 	}
 
-	addr := net.JoinHostPort(monitor.Hostname, uint16toa(monitor.Port))
+	addr := net.JoinHostPort(monitor.Hostname, strconv.Itoa(int(monitor.Port)))
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	elapsed := float64(time.Since(start).Milliseconds())
 
@@ -78,6 +78,86 @@ func NewPingChecker() *PingChecker {
 
 func (c *PingChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 	start := time.Now()
+	cfg := pingCommandConfigFromMonitor(monitor)
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ping", "-c", strconv.Itoa(cfg.count), "-W", strconv.Itoa(cfg.deadlineSeconds), monitor.Hostname)
+	output, err := cmd.Output()
+	elapsed := float64(time.Since(start).Milliseconds())
+
+	result := &CheckResult{
+		PingMS: elapsed,
+	}
+
+	if err != nil {
+		result.Status = model.StatusDown
+		if ctx.Err() == context.DeadlineExceeded {
+			result.Msg = "ping failed: timeout"
+		} else {
+			result.Msg = "ping failed"
+		}
+		return result, nil
+	}
+
+	pingStats := parsePingOutput(string(output))
+
+	if pingStats.successCount > 0 {
+		result.Status = model.StatusUP
+		loss := 100 - int(float64(pingStats.successCount)/float64(cfg.count)*100)
+		result.Msg = fmt.Sprintf("ping OK, packet loss %d%% (%d/%d received)", loss, pingStats.successCount, cfg.count)
+		result.PingMS = pingStats.avgPing()
+	} else {
+		result.Status = model.StatusDown
+		result.Msg = "ping failed: all packets lost"
+	}
+
+	return result, nil
+}
+
+type pingOutputStats struct {
+	successCount int
+	totalPing    float64
+}
+
+func (s pingOutputStats) avgPing() float64 {
+	if s.successCount == 0 {
+		return 0
+	}
+	return s.totalPing / float64(s.successCount)
+}
+
+func parsePingOutput(output string) pingOutputStats {
+	stats := pingOutputStats{}
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if !strings.Contains(line, "time=") && !strings.Contains(line, "time<") {
+			continue
+		}
+		stats.successCount++
+		parts := strings.Split(line, " time=")
+		if len(parts) < 2 {
+			continue
+		}
+		timePart := strings.TrimSuffix(parts[1], " ms")
+		timePart = strings.TrimSuffix(timePart, " µs")
+		timePart = strings.TrimSuffix(timePart, " us")
+		v, err := strconv.ParseFloat(timePart, 64)
+		if err == nil {
+			stats.totalPing += v
+		}
+	}
+	return stats
+}
+
+type pingCommandConfig struct {
+	count           int
+	timeout         time.Duration
+	deadlineSeconds int
+}
+
+func pingCommandConfigFromMonitor(monitor *model.Monitor) pingCommandConfig {
 	count := int(monitor.PingCount)
 	if count <= 0 {
 		count = 4
@@ -96,63 +176,12 @@ func (c *PingChecker) Check(monitor *model.Monitor) (*CheckResult, error) {
 	if deadlineSeconds <= 0 {
 		deadlineSeconds = 1
 	}
-	deadline := strconv.Itoa(deadlineSeconds)
-	countStr := strconv.Itoa(count)
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "ping", "-c", countStr, "-W", deadline, monitor.Hostname)
-	output, err := cmd.Output()
-	elapsed := float64(time.Since(start).Milliseconds())
-
-	result := &CheckResult{
-		PingMS: elapsed,
+	return pingCommandConfig{
+		count:           count,
+		timeout:         timeout,
+		deadlineSeconds: deadlineSeconds,
 	}
-
-	if err != nil {
-		result.Status = model.StatusDown
-		if ctx.Err() == context.DeadlineExceeded {
-			result.Msg = "ping failed: timeout"
-		} else {
-			result.Msg = "ping failed"
-		}
-		return result, nil
-	}
-
-	outStr := string(output)
-	totalPing := 0.0
-	successCount := 0
-
-	lines := strings.Split(outStr, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "time=") || strings.Contains(line, "time<") {
-			successCount++
-			parts := strings.Split(line, " time=")
-			if len(parts) < 2 {
-				continue
-			}
-			timePart := strings.TrimSuffix(parts[1], " ms")
-			timePart = strings.TrimSuffix(timePart, " µs")
-			timePart = strings.TrimSuffix(timePart, " us")
-			v, err := strconv.ParseFloat(timePart, 64)
-			if err == nil {
-				totalPing += v
-			}
-		}
-	}
-
-	if successCount > 0 {
-		result.Status = model.StatusUP
-		loss := 100 - int(float64(successCount)/float64(count)*100)
-		result.Msg = fmt.Sprintf("ping OK, packet loss %d%% (%d/%d received)", loss, successCount, count)
-		result.PingMS = totalPing / float64(successCount)
-	} else {
-		result.Status = model.StatusDown
-		result.Msg = "ping failed: all packets lost"
-	}
-
-	return result, nil
 }
 
 type DNSChecker struct{}
@@ -233,11 +262,7 @@ func lookupDNSRecord(ctx context.Context, resolver *net.Resolver, recordType str
 		if err != nil {
 			return nil, err
 		}
-		out := make([]string, 0, len(records))
-		for _, record := range records {
-			out = append(out, fmt.Sprintf("%s(%d)", record.Host, record.Pref))
-		}
-		return out, nil
+		return mxRecordStrings(records), nil
 	case "TXT":
 		return resolver.LookupTXT(ctx, hostname)
 	case "NS":
@@ -245,11 +270,7 @@ func lookupDNSRecord(ctx context.Context, resolver *net.Resolver, recordType str
 		if err != nil {
 			return nil, err
 		}
-		out := make([]string, 0, len(records))
-		for _, record := range records {
-			out = append(out, record.Host)
-		}
-		return out, nil
+		return nsRecordStrings(records), nil
 	default:
 		return resolver.LookupHost(ctx, hostname)
 	}
@@ -263,14 +284,18 @@ func ipStrings(ips []net.IP) []string {
 	return out
 }
 
-func uint16toa(v uint16) string {
-	if v == 0 {
-		return "0"
+func mxRecordStrings(records []*net.MX) []string {
+	out := make([]string, 0, len(records))
+	for _, record := range records {
+		out = append(out, fmt.Sprintf("%s(%d)", record.Host, record.Pref))
 	}
-	out := ""
-	for v > 0 {
-		out = string(rune('0'+v%10)) + out
-		v /= 10
+	return out
+}
+
+func nsRecordStrings(records []*net.NS) []string {
+	out := make([]string, 0, len(records))
+	for _, record := range records {
+		out = append(out, record.Host)
 	}
 	return out
 }

@@ -11,7 +11,7 @@ import (
 )
 
 type HeartbeatPublisher interface {
-	SendToUser(userID uint, msgType string, payload interface{})
+	SendToUser(userID uint, msgType string, payload any)
 }
 
 type Scheduler struct {

@@ -12,7 +12,7 @@ func TestImportNotificationsKeepsMaskedExistingSecret(t *testing.T) {
 	existing := model.Notification{
 		UserID: userID,
 		Name:   "ops",
-		Type:   "feishu",
+		Type:   model.NotificationTypeFeishu,
 		Config: `{"webhook_url":"https://real"}`,
 		Active: true,
 	}
@@ -23,7 +23,7 @@ func TestImportNotificationsKeepsMaskedExistingSecret(t *testing.T) {
 	tx := db.Begin()
 	importNotifications(tx, userID, []ExportNotification{{
 		Name:   "ops",
-		Type:   "email",
+		Type:   model.NotificationTypeEmail,
 		Config: `{"webhook_url":"***"}`,
 	}}, "overwrite")
 	if err := tx.Commit().Error; err != nil {
@@ -34,7 +34,7 @@ func TestImportNotificationsKeepsMaskedExistingSecret(t *testing.T) {
 	if err := db.First(&got, existing.ID).Error; err != nil {
 		t.Fatalf("load notification: %v", err)
 	}
-	if got.Type != "email" {
+	if got.Type != model.NotificationTypeEmail {
 		t.Fatalf("type=%s want email", got.Type)
 	}
 	if got.Config != existing.Config {

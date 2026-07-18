@@ -13,6 +13,15 @@ type FeishuNotifier struct {
 	db         *gorm.DB
 }
 
+type FeishuTextMessage struct {
+	MsgType string            `json:"msg_type"`
+	Content FeishuTextContent `json:"content"`
+}
+
+type FeishuTextContent struct {
+	Text string `json:"text"`
+}
+
 type FeishuCardMessage struct {
 	MsgType string     `json:"msg_type"`
 	Card    FeishuCard `json:"card"`
@@ -58,6 +67,11 @@ type FeishuCardAction struct {
 	Value map[string]string `json:"value"`
 }
 
+type feishuAPIResponse struct {
+	Code *int   `json:"code"`
+	Msg  string `json:"msg"`
+}
+
 func NewFeishuNotifier(webhookURL string, db *gorm.DB) *FeishuNotifier {
 	return &FeishuNotifier{
 		WebhookURL: webhookURL,
@@ -66,17 +80,19 @@ func NewFeishuNotifier(webhookURL string, db *gorm.DB) *FeishuNotifier {
 }
 
 func (n *FeishuNotifier) SendText(content string) error {
-	msg := map[string]interface{}{
-		"msg_type": "text",
-		"content": map[string]string{
-			"text": content,
-		},
+	msg := FeishuTextMessage{
+		MsgType: "text",
+		Content: FeishuTextContent{Text: content},
 	}
 
 	return n.post(msg)
 }
 
 func (n *FeishuNotifier) SendCard(monitorName string, monitorType string, status string, statusColor string, msg string, url string) error {
+	return n.post(newFeishuCardMessage(monitorName, monitorType, status, statusColor, msg, url))
+}
+
+func newFeishuCardMessage(monitorName string, monitorType string, status string, statusColor string, msg string, url string) FeishuCardMessage {
 	card := FeishuCardMessage{
 		MsgType: "interactive",
 		Card: FeishuCard{
@@ -133,10 +149,10 @@ func (n *FeishuNotifier) SendCard(monitorName string, monitorType string, status
 		)
 	}
 
-	return n.post(card)
+	return card
 }
 
-func (n *FeishuNotifier) post(msg interface{}) error {
+func (n *FeishuNotifier) post(msg any) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -147,17 +163,16 @@ func (n *FeishuNotifier) post(msg interface{}) error {
 		return err
 	}
 
-	var result map[string]interface{}
+	var result feishuAPIResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return fmt.Errorf("feishu api returned invalid json: %s", string(respBody))
 	}
 
-	code, ok := result["code"].(float64)
-	if !ok {
+	if result.Code == nil {
 		return nil
 	}
-	if code != 0 {
-		return fmt.Errorf("feishu api error: code=%v, msg=%v", code, result["msg"])
+	if *result.Code != 0 {
+		return fmt.Errorf("feishu api error: code=%d, msg=%s", *result.Code, result.Msg)
 	}
 
 	return nil

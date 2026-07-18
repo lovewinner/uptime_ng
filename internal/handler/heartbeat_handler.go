@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,10 +22,7 @@ func NewHeartbeatHandler(db *gorm.DB) *HeartbeatHandler {
 func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	monitorID := c.Param("id")
-	period := parseInt(c.DefaultQuery("period", "3600")) // default 1h in seconds
-	if period <= 0 {
-		period = 3600
-	}
+	period := positiveIntParam(c.DefaultQuery("period", "3600"), 3600)
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
@@ -47,7 +43,7 @@ func (h *HeartbeatHandler) GetBeats(c *gin.Context) {
 func (h *HeartbeatHandler) GetImportantBeats(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	monitorID := c.Param("id")
-	limit := c.DefaultQuery("limit", "50")
+	limit := positiveIntParam(c.DefaultQuery("limit", "50"), 50)
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
@@ -58,7 +54,7 @@ func (h *HeartbeatHandler) GetImportantBeats(c *gin.Context) {
 	var beats []model.Heartbeat
 	h.DB.Where("monitor_id = ? AND important = ?", monitorID, true).
 		Order("time DESC").
-		Limit(parseInt(limit)).
+		Limit(limit).
 		Find(&beats)
 
 	c.JSON(http.StatusOK, beats)
@@ -104,7 +100,7 @@ func (h *HeartbeatHandler) GetRecentStatus(c *gin.Context) {
 
 func (h *HeartbeatHandler) GetStatus(c *gin.Context) {
 	userID := c.GetUint("user_id")
-	monitorID := uint(parseInt(c.Param("id")))
+	monitorID := uint(positiveIntParam(c.Param("id"), 0))
 	if monitorID == 0 {
 		badRequest(c, "invalid_monitor_id", "invalid monitor id")
 		return
@@ -115,9 +111,4 @@ func (h *HeartbeatHandler) GetStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
-}
-
-func parseInt(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
 }

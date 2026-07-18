@@ -45,15 +45,7 @@ func ComputeActiveStatuses(db *gorm.DB, userID uint) ([]MonitorStatusSnapshot, e
 }
 
 func computeMonitorStatus(db *gorm.DB, monitor model.Monitor, visiting map[uint]bool) (MonitorStatusSnapshot, error) {
-	item := MonitorStatusSnapshot{
-		ID:        monitor.ID,
-		Name:      monitor.Name,
-		Type:      monitor.Type,
-		GroupID:   monitor.GroupID,
-		Status:    model.StatusPending,
-		Uptime24H: 1.0,
-		Active:    monitor.Active,
-	}
+	item := pendingStatusSnapshot(monitor)
 	if monitor.Type == model.MonitorTypeGroup {
 		status, uptime := computeGroupStatus(db, monitor, visiting)
 		item.Status = status
@@ -89,31 +81,16 @@ func computeGroupStatus(db *gorm.DB, group model.Monitor, visiting map[uint]bool
 		return model.StatusPending, 1.0
 	}
 
-	status := model.StatusUP
-	hasPending := false
-	uptimeSum := 0.0
-	uptimeCount := 0
+	accumulator := groupStatusAccumulator{}
 	for _, child := range children {
 		childStatus, err := computeMonitorStatus(db, child, visiting)
 		if err != nil {
-			hasPending = true
+			accumulator.addPending()
 			continue
 		}
-		if childStatus.Status == model.StatusDown {
-			status = model.StatusDown
-		} else if childStatus.Status != model.StatusUP {
-			hasPending = true
-		}
-		uptimeSum += childStatus.Uptime24H
-		uptimeCount++
+		accumulator.addChild(childStatus)
 	}
-	if status != model.StatusDown && hasPending {
-		status = model.StatusPending
-	}
-	if uptimeCount == 0 {
-		return model.StatusPending, 1.0
-	}
-	return status, uptimeSum / float64(uptimeCount)
+	return accumulator.result()
 }
 
 func monitorUptime24H(db *gorm.DB, monitorID uint) float64 {

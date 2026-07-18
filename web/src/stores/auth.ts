@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '@/api/http'
+import { apiErrorMessage } from '@/api/errors'
 import { wsClient } from '@/api/ws'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -51,16 +52,8 @@ export const useAuthStore = defineStore('auth', () => {
       setAuth(data.token, data.username, data.role, data.user_id)
       return { ok: true }
     } catch (e: unknown) {
-      return { ok: false, error: authErrorMessage(e, '注册失败') }
+      return { ok: false, error: apiErrorMessage(e, '注册失败') }
     }
-  }
-
-  function authErrorMessage(e: unknown, fallback: string): string {
-    if (typeof e === 'object' && e !== null && 'response' in e) {
-      const response = (e as { response?: { data?: { error?: string } } }).response
-      return response?.data?.error || fallback
-    }
-    return fallback
   }
 
   const isLoggedIn = () => !!token.value

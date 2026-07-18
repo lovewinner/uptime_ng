@@ -59,12 +59,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, TokenResponse{
-		Token:    token,
-		UserID:   user.ID,
-		Username: user.Username,
-		Role:     user.Role,
-	})
+	c.JSON(http.StatusOK, tokenResponseFromUser(user, token))
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
@@ -76,9 +71,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	var count int64
 	h.DB.Model(&model.User{}).Count(&count)
-	if count == 0 {
-		// first user
-	}
 
 	var existing model.User
 	if err := h.DB.Where("username = ?", req.Username).First(&existing).Error; err == nil {
@@ -115,12 +107,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, TokenResponse{
-		Token:    token,
-		UserID:   user.ID,
-		Username: user.Username,
-		Role:     user.Role,
-	})
+	c.JSON(http.StatusCreated, tokenResponseFromUser(user, token))
 }
 
 func (h *AuthHandler) Profile(c *gin.Context) {
@@ -132,35 +119,14 @@ func (h *AuthHandler) Profile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":       user.ID,
-		"username": user.Username,
-		"role":     user.Role,
-	})
-}
-
-type UserListResponse struct {
-	ID       uint   `json:"id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
-	Active   bool   `json:"active"`
+	c.JSON(http.StatusOK, userProfileResponse(user))
 }
 
 func (h *AuthHandler) ListUsers(c *gin.Context) {
 	var users []model.User
 	h.DB.Find(&users)
 
-	results := make([]UserListResponse, len(users))
-	for i, u := range users {
-		results[i] = UserListResponse{
-			ID:       u.ID,
-			Username: u.Username,
-			Role:     u.Role,
-			Active:   u.Active,
-		}
-	}
-
-	c.JSON(http.StatusOK, results)
+	c.JSON(http.StatusOK, userListResponses(users))
 }
 
 type UpdateUserRequest struct {
@@ -185,46 +151,24 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	updates := map[string]interface{}{}
-	if req.Role != nil {
-		if *req.Role != model.RoleAdmin && *req.Role != model.RoleUser {
-			badRequest(c, "invalid_role", "role must be admin or user")
-			return
-		}
-		if target.Role == model.RoleAdmin && *req.Role != model.RoleAdmin && h.isLastActiveAdmin(target.ID) {
-			badRequest(c, "last_admin", "cannot remove the last active admin")
-			return
-		}
-		updates["role"] = *req.Role
+	lastActiveAdmin := target.Role == model.RoleAdmin && h.isLastActiveAdmin(target.ID)
+	plan, validationErr := planUserUpdate(req, target, currentUserID, lastActiveAdmin)
+	if validationErr != nil {
+		badRequest(c, validationErr.code, validationErr.message)
+		return
 	}
-	if req.Active != nil {
-		if target.ID == currentUserID && !*req.Active {
-			badRequest(c, "self_deactivate", "cannot deactivate yourself")
-			return
-		}
-		if target.Role == model.RoleAdmin && !*req.Active && h.isLastActiveAdmin(target.ID) {
-			badRequest(c, "last_admin", "cannot deactivate the last active admin")
-			return
-		}
-		updates["active"] = *req.Active
-	}
-	if req.Password != nil {
-		if len(*req.Password) < 6 {
-			badRequest(c, "invalid_password", "password must be at least 6 characters")
-			return
-		}
-		hashedPassword, err := model.HashPassword(*req.Password)
+
+	hashedPassword := ""
+	if plan.password != nil {
+		var err error
+		hashedPassword, err = model.HashPassword(*plan.password)
 		if err != nil {
 			errorResponse(c, http.StatusInternalServerError, "password_hash_failed", "failed to hash password")
 			return
 		}
-		updates["password"] = hashedPassword
-	}
-	if len(updates) == 0 {
-		badRequest(c, "empty_update", "no updates provided")
-		return
 	}
 
+	updates := plan.fields(hashedPassword)
 	if err := h.DB.Model(&model.User{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "user_update_failed", err.Error())
 		return

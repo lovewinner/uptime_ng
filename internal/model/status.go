@@ -7,31 +7,41 @@ import (
 	"strings"
 )
 
-func CheckStatusCode(statusCode int, acceptedStatusCodesJSON string) bool {
-	var codes []string
-	if err := parseJSON(acceptedStatusCodesJSON, &codes); err != nil {
-		codes = []string{"200-299"}
-	}
+var defaultAcceptedStatusCodes = []string{"200-299"}
 
-	for _, c := range codes {
-		if strings.Contains(c, "-") {
-			parts := strings.SplitN(c, "-", 2)
-			low, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-			high, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-			if statusCode >= low && statusCode <= high {
-				return true
-			}
-		} else {
-			val, err := strconv.Atoi(strings.TrimSpace(c))
-			if err == nil && statusCode == val {
-				return true
-			}
+func CheckStatusCode(statusCode int, acceptedStatusCodesJSON string) bool {
+	codes := acceptedStatusCodes(acceptedStatusCodesJSON)
+
+	for _, code := range codes {
+		if statusCodeRuleMatches(statusCode, code) {
+			return true
 		}
 	}
 	return false
 }
 
-func parseJSON(raw string, v interface{}) error {
+func acceptedStatusCodes(raw string) []string {
+	var codes []string
+	if err := parseJSON(raw, &codes); err != nil {
+		return defaultAcceptedStatusCodes
+	}
+	return codes
+}
+
+func statusCodeRuleMatches(statusCode int, rule string) bool {
+	rule = strings.TrimSpace(rule)
+	if strings.Contains(rule, "-") {
+		parts := strings.SplitN(rule, "-", 2)
+		low, errLow := strconv.Atoi(strings.TrimSpace(parts[0]))
+		high, errHigh := strconv.Atoi(strings.TrimSpace(parts[1]))
+		return errLow == nil && errHigh == nil && statusCode >= low && statusCode <= high
+	}
+
+	val, err := strconv.Atoi(rule)
+	return err == nil && statusCode == val
+}
+
+func parseJSON(raw string, v any) error {
 	s := strings.TrimSpace(raw)
 	if s == "" || s == "null" {
 		return fmt.Errorf("empty json")

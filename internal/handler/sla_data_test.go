@@ -33,3 +33,28 @@ func TestDailyDataPointsUseSharedRatio(t *testing.T) {
 		t.Fatalf("point=%+v", point)
 	}
 }
+
+func TestDailyStatsUptime(t *testing.T) {
+	stats := []model.StatDaily{
+		{Up: 3, Down: 1},
+		{Up: 1, Down: 3},
+	}
+	if got := dailyStatsUptime(stats); got != 0.5 {
+		t.Fatalf("uptime=%f want 0.5", got)
+	}
+	if got := dailyStatsUptime(nil); got != 1.0 {
+		t.Fatalf("empty uptime=%f want 1", got)
+	}
+}
+
+func TestUptime24HFromSLA(t *testing.T) {
+	if got := uptime24HFromSLA(SLAResult{}); got != 1.0 {
+		t.Fatalf("empty 24h=%f want 1", got)
+	}
+	if got := uptime24HFromSLA(SLAResult{UptimePercentage: 0.75, TotalChecks: 4}); got != 0.75 {
+		t.Fatalf("24h=%f want 0.75", got)
+	}
+	if got := uptime24HFromSLA(SLAResult{UptimePercentage: 0, TotalChecks: 4}); got != 0 {
+		t.Fatalf("down 24h=%f want 0", got)
+	}
+}

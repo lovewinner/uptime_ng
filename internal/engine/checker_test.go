@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"uptime_ng/internal/model"
 )
@@ -49,6 +50,52 @@ func TestHTTPCheckerAdvancedOptions(t *testing.T) {
 	}
 	if !strings.Contains(result.Msg, "response:") {
 		t.Fatalf("response preview missing: %s", result.Msg)
+	}
+}
+
+func TestPingCommandConfigFromMonitor(t *testing.T) {
+	cfg := pingCommandConfigFromMonitor(&model.Monitor{})
+	if cfg.count != 4 {
+		t.Fatalf("count=%d want 4", cfg.count)
+	}
+	if cfg.timeout != 30*time.Second {
+		t.Fatalf("timeout=%s want 30s", cfg.timeout)
+	}
+	if cfg.deadlineSeconds != 1 {
+		t.Fatalf("deadline=%d want 1", cfg.deadlineSeconds)
+	}
+
+	cfg = pingCommandConfigFromMonitor(&model.Monitor{
+		Timeout:               5,
+		PingCount:             6,
+		PingPerRequestTimeout: 1501,
+	})
+	if cfg.count != 6 || cfg.timeout != 5*time.Second || cfg.deadlineSeconds != 2 {
+		t.Fatalf("config=%+v", cfg)
+	}
+}
+
+func TestParsePingOutput(t *testing.T) {
+	output := strings.Join([]string{
+		"64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=1.25 ms",
+		"64 bytes from 127.0.0.1: icmp_seq=2 ttl=64 time=2.75 ms",
+		"64 bytes from 127.0.0.1: icmp_seq=3 ttl=64 time<1 ms",
+	}, "\n")
+
+	stats := parsePingOutput(output)
+	if stats.successCount != 3 {
+		t.Fatalf("success=%d want 3", stats.successCount)
+	}
+	if stats.totalPing != 4.0 {
+		t.Fatalf("totalPing=%f want 4.0", stats.totalPing)
+	}
+	if stats.avgPing() != 4.0/3.0 {
+		t.Fatalf("avg=%f want %f", stats.avgPing(), 4.0/3.0)
+	}
+
+	empty := parsePingOutput("100% packet loss")
+	if empty.successCount != 0 || empty.avgPing() != 0 {
+		t.Fatalf("empty stats=%+v avg=%f", empty, empty.avgPing())
 	}
 }
 
@@ -136,5 +183,22 @@ func TestDNSCheckerInvalidHost(t *testing.T) {
 	}
 	if result.Status != model.StatusDown {
 		t.Fatalf("status=%d msg=%s", result.Status, result.Msg)
+	}
+}
+
+func TestDNSRecordFormatters(t *testing.T) {
+	ips := ipStrings([]net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("2001:db8::1")})
+	if len(ips) != 2 || ips[0] != "192.0.2.1" || ips[1] != "2001:db8::1" {
+		t.Fatalf("ips=%v", ips)
+	}
+
+	mx := mxRecordStrings([]*net.MX{{Host: "mx1.example.com.", Pref: 10}, {Host: "mx2.example.com.", Pref: 20}})
+	if len(mx) != 2 || mx[0] != "mx1.example.com.(10)" || mx[1] != "mx2.example.com.(20)" {
+		t.Fatalf("mx=%v", mx)
+	}
+
+	ns := nsRecordStrings([]*net.NS{{Host: "ns1.example.com."}, {Host: "ns2.example.com."}})
+	if len(ns) != 2 || ns[0] != "ns1.example.com." || ns[1] != "ns2.example.com." {
+		t.Fatalf("ns=%v", ns)
 	}
 }

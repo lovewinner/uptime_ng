@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/smtp"
+	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -46,7 +47,7 @@ func (n *EmailNotifier) Send(subject, body string) error {
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
 		n.From, n.To, subject, body)
 
-	addr := fmt.Sprintf("%s:%s", n.SMTPHost, uintToStr(n.SMTPPort))
+	addr := fmt.Sprintf("%s:%s", n.SMTPHost, strconv.Itoa(n.SMTPPort))
 
 	auth := smtp.PlainAuth("", n.Username, n.Password, n.SMTPHost)
 	if n.SMTPPort == 465 {
@@ -129,7 +130,7 @@ func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) 
 		if err := db.First(&notif, mn.NotificationID).Error; err != nil {
 			continue
 		}
-		if notif.Type != "email" || !notif.Active {
+		if notif.Type != model.NotificationTypeEmail || !notif.Active {
 			continue
 		}
 		configMap, err := ParseNotificationConfig(notif.Config)
@@ -137,56 +138,16 @@ func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) 
 			log.Printf("[email] notification %s has invalid config: %v", notif.Name, err)
 			continue
 		}
-		to := configMap.EmailRecipients()
-		if to == "" {
+		content, ok := BuildEmailAlertContent(monitor, configMap, isUp, msg)
+		if !ok {
 			continue
 		}
 
-		statusText := "DOWN"
-		if isUp {
-			statusText = "UP (已恢复)"
-		}
-
-		vars := map[string]string{
-			"NAME":   monitor.Name,
-			"TYPE":   monitor.Type,
-			"STATUS": statusText,
-			"MSG":    msg,
-		}
-		subject := configMap.Template("subject_template", vars)
-		if subject == "" {
-			subject = fmt.Sprintf("[uptime_ng] %s - %s", monitor.Name, statusText)
-		}
-		htmlBody := configMap.Template("body_template", vars)
-		if htmlBody == "" {
-			htmlBody = FormatEmailTemplate(monitor, statusText, msg)
-		}
-
-		n := NewEmailNotifierFromConfig(to)
-		if err := n.Send(subject, htmlBody); err != nil {
+		n := NewEmailNotifierFromConfig(content.To)
+		if err := n.Send(content.Subject, content.Body); err != nil {
 			log.Printf("[email] failed to send: %v", err)
 		}
 	}
-}
-
-func uintToStr(v int) string {
-	if v == 0 {
-		return "0"
-	}
-	neg := false
-	if v < 0 {
-		neg = true
-		v = -v
-	}
-	s := ""
-	for v > 0 {
-		s = string(rune('0'+v%10)) + s
-		v /= 10
-	}
-	if neg {
-		s = "-" + s
-	}
-	return s
 }
 
 func FormatEmailTemplate(m *model.Monitor, status string, msg string) string {

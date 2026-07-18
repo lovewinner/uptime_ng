@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -34,17 +33,10 @@ func (h *NotificationHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if req.Type != "feishu" && req.Type != "email" {
-		badRequest(c, "invalid_notification_type", "type must be feishu or email")
+	notif, validationErr := notificationFromRequest(req, userID.(uint))
+	if validationErr != nil {
+		badRequest(c, validationErr.code, validationErr.message)
 		return
-	}
-
-	notif := model.Notification{
-		UserID: userID.(uint),
-		Name:   req.Name,
-		Type:   req.Type,
-		Config: req.Config,
-		Active: true,
 	}
 
 	if err := h.DB.Create(&notif).Error; err != nil {
@@ -92,14 +84,10 @@ func (h *NotificationHandler) Update(c *gin.Context) {
 		badRequest(c, "invalid_request", err.Error())
 		return
 	}
-	if req.Type != "feishu" && req.Type != "email" {
-		badRequest(c, "invalid_notification_type", "type must be feishu or email")
+	if validationErr := applyNotificationRequest(&notif, req); validationErr != nil {
+		badRequest(c, validationErr.code, validationErr.message)
 		return
 	}
-
-	notif.Name = req.Name
-	notif.Type = req.Type
-	notif.Config = req.Config
 
 	if err := h.DB.Save(&notif).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "notification_update_failed", err.Error())
@@ -139,26 +127,21 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 		return
 	}
 
-	msg := fmt.Sprintf("来自 uptime_ng 的测试消息。通知: %s (%s)", notif.Name, notif.Type)
+	target, validationErr := notificationTestTargetFromConfig(notif, configMap)
+	if validationErr != nil {
+		badRequest(c, validationErr.code, validationErr.message)
+		return
+	}
+
 	switch notif.Type {
-	case "feishu":
-		webhookURL := configMap.WebhookURL()
-		if webhookURL == "" {
-			badRequest(c, "missing_webhook_url", "missing webhook_url")
-			return
-		}
-		if err := notifier.NewFeishuNotifier(webhookURL, h.DB).SendText(msg); err != nil {
+	case model.NotificationTypeFeishu:
+		if err := notifier.NewFeishuNotifier(target.webhookURL, h.DB).SendText(target.message); err != nil {
 			errorResponse(c, http.StatusBadGateway, "notification_send_failed", err.Error())
 			return
 		}
-	case "email":
-		to := configMap.EmailRecipients()
-		if to == "" {
-			badRequest(c, "missing_email_recipient", "missing email recipient")
-			return
-		}
-		n := notifier.NewEmailNotifierFromConfig(to)
-		if err := n.Send("[uptime_ng] 通知测试", "<p>"+msg+"</p>"); err != nil {
+	case model.NotificationTypeEmail:
+		n := notifier.NewEmailNotifierFromConfig(target.emailTo)
+		if err := n.Send(target.emailSubject, target.emailBody); err != nil {
 			errorResponse(c, http.StatusBadGateway, "notification_send_failed", err.Error())
 			return
 		}

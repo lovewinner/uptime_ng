@@ -126,25 +126,7 @@ func (h *MonitorHandler) List(c *gin.Context) {
 	results := make([]gin.H, len(monitors))
 
 	for i, m := range monitors {
-		var tags []model.Tag
-		h.DB.Raw(`
-			SELECT t.* FROM tags t
-			JOIN monitor_tags mt ON mt.tag_id = t.id
-			WHERE mt.monitor_id = ?
-		`, m.ID).Scan(&tags)
-
-		var notifs []model.MonitorNotification
-		h.DB.Where("monitor_id = ?", m.ID).Find(&notifs)
-		notifIDs := make([]uint, len(notifs))
-		for j, n := range notifs {
-			notifIDs[j] = n.NotificationID
-		}
-
-		results[i] = gin.H{
-			"monitor":          m,
-			"tags":             tags,
-			"notification_ids": notifIDs,
-		}
+		results[i] = monitorResponse(h.DB, m)
 	}
 
 	c.JSON(http.StatusOK, results)
@@ -160,25 +142,7 @@ func (h *MonitorHandler) Get(c *gin.Context) {
 		return
 	}
 
-	var tags []model.Tag
-	h.DB.Raw(`
-		SELECT t.* FROM tags t
-		JOIN monitor_tags mt ON mt.tag_id = t.id
-		WHERE mt.monitor_id = ?
-	`, monitor.ID).Scan(&tags)
-
-	var notifs []model.MonitorNotification
-	h.DB.Where("monitor_id = ?", monitor.ID).Find(&notifs)
-	notifIDs := make([]uint, len(notifs))
-	for j, n := range notifs {
-		notifIDs[j] = n.NotificationID
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"monitor":          monitor,
-		"tags":             tags,
-		"notification_ids": notifIDs,
-	})
+	c.JSON(http.StatusOK, monitorResponse(h.DB, monitor))
 }
 
 func (h *MonitorHandler) Update(c *gin.Context) {
@@ -275,24 +239,13 @@ func (h *MonitorHandler) Resume(c *gin.Context) {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
-	monitors := []model.Monitor{monitor}
-	if monitor.Type == model.MonitorTypeGroup {
-		monitors = append(monitors, h.descendantMonitors(userID.(uint), monitor.ID)...)
-	}
-	ids := make([]uint, 0, len(monitors))
-	for _, m := range monitors {
-		ids = append(ids, m.ID)
-	}
+	monitors := h.monitorActivationTargets(userID.(uint), monitor)
+	ids := monitorIDs(monitors)
 	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", true).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_resume_failed", err.Error())
 		return
 	}
-	if h.Scheduler != nil {
-		for i := range monitors {
-			monitors[i].Active = true
-			h.Scheduler.RestartMonitor(&monitors[i])
-		}
-	}
+	restartMonitors(h.Scheduler, monitors)
 	c.JSON(http.StatusOK, gin.H{"message": "monitor resumed"})
 }
 
@@ -305,48 +258,33 @@ func (h *MonitorHandler) Pause(c *gin.Context) {
 		errorResponse(c, http.StatusNotFound, "monitor_not_found", "monitor not found")
 		return
 	}
-	monitors := []model.Monitor{monitor}
-	if monitor.Type == model.MonitorTypeGroup {
-		monitors = append(monitors, h.descendantMonitors(userID.(uint), monitor.ID)...)
-	}
-	ids := make([]uint, 0, len(monitors))
-	for _, m := range monitors {
-		ids = append(ids, m.ID)
-	}
+	monitors := h.monitorActivationTargets(userID.(uint), monitor)
+	ids := monitorIDs(monitors)
 	if err := h.DB.Model(&model.Monitor{}).Where("id IN ?", ids).Update("active", false).Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_pause_failed", err.Error())
 		return
 	}
-	if h.Scheduler != nil {
-		for _, m := range monitors {
-			h.Scheduler.StopMonitor(m.ID)
-		}
-	}
+	stopMonitors(h.Scheduler, monitors)
 	c.JSON(http.StatusOK, gin.H{"message": "monitor paused"})
 }
 
-type monitorValidationError struct {
-	code    string
-	message string
-}
-
-func (h *MonitorHandler) validateMonitorRequest(userID uint, monitorID uint, req CreateMonitorRequest) *monitorValidationError {
+func (h *MonitorHandler) validateMonitorRequest(userID uint, monitorID uint, req CreateMonitorRequest) *requestValidationError {
 	if !isValidMonitorType(req.Type) {
-		return &monitorValidationError{code: "invalid_monitor_type", message: "type must be http, tcp, ping, dns, push or group"}
+		return &requestValidationError{code: "invalid_monitor_type", message: "type must be http, tcp, ping, dns, push or group"}
 	}
 	if req.GroupID == nil {
 		return nil
 	}
 	if monitorID != 0 && *req.GroupID == monitorID {
-		return &monitorValidationError{code: "invalid_group", message: "monitor cannot be its own group"}
+		return &requestValidationError{code: "invalid_group", message: "monitor cannot be its own group"}
 	}
 
 	var parent model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ? AND type = ?", *req.GroupID, userID, model.MonitorTypeGroup).First(&parent).Error; err != nil {
-		return &monitorValidationError{code: "invalid_group", message: "group_id must reference a group monitor owned by the current user"}
+		return &requestValidationError{code: "invalid_group", message: "group_id must reference a group monitor owned by the current user"}
 	}
 	if monitorID != 0 && h.wouldCreateGroupCycle(userID, monitorID, parent.ID) {
-		return &monitorValidationError{code: "group_cycle", message: "group hierarchy cannot contain cycles"}
+		return &requestValidationError{code: "group_cycle", message: "group hierarchy cannot contain cycles"}
 	}
 	return nil
 }

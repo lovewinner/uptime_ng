@@ -483,23 +483,3 @@ func isSensitiveKey(key string) bool {
 func containsMaskedValue(config string) bool {
 	return strings.Contains(config, `"***"`) || strings.Contains(config, ":***")
 }
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	s := ""
-	neg := false
-	if n < 0 {
-		neg = true
-		n = -n
-	}
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	if neg {
-		s = "-" + s
-	}
-	return s
-}

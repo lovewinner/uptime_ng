@@ -25,19 +25,20 @@ func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat,
 	var mnList []model.MonitorNotification
 	d.DB.Where("monitor_id = ?", monitor.ID).Find(&mnList)
 
+	notifications := make([]model.Notification, 0, len(mnList))
 	for _, mn := range mnList {
 		var notif model.Notification
 		if err := d.DB.First(&notif, mn.NotificationID).Error; err != nil {
 			continue
 		}
-		if !notif.Active {
-			continue
-		}
+		notifications = append(notifications, notif)
+	}
 
+	for _, notif := range activeNotifications(notifications) {
 		switch notif.Type {
-		case "feishu":
+		case model.NotificationTypeFeishu:
 			d.sendFeishu(notif, monitor, isUp, heartbeat.Msg)
-		case "email":
+		case model.NotificationTypeEmail:
 			d.sendEmail(notif, monitor, isUp, heartbeat.Msg)
 		default:
 			log.Printf("Unknown notification type: %s", notif.Type)
@@ -46,16 +47,7 @@ func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat,
 
 	// Also send to global feishu webhook if configured
 	if config.AppConfig != nil && config.AppConfig.Feishu.WebhookURL != "" {
-		alreadySent := false
-		for _, mn := range mnList {
-			var notif model.Notification
-			d.DB.First(&notif, mn.NotificationID)
-			if notif.Type == "feishu" {
-				alreadySent = true
-				break
-			}
-		}
-		if !alreadySent {
+		if !hasNotificationType(notifications, model.NotificationTypeFeishu) {
 			notifier.SendFeishuAlert(config.AppConfig.Feishu.WebhookURL, monitor.Name, monitor.Type, isUp, heartbeat.Msg)
 		}
 	}
@@ -88,37 +80,17 @@ func (d *NotifyDispatch) sendEmail(notif model.Notification, monitor *model.Moni
 		log.Printf("[email] notification %s has invalid config: %v", notif.Name, err)
 		return
 	}
-	to := configMap.EmailRecipients()
-	if to == "" {
+	content, ok := notifier.BuildEmailAlertContent(monitor, configMap, isUp, msg)
+	if !ok {
 		log.Printf("[email] notification %s has no recipient", notif.Name)
 		return
 	}
 
-	n := notifier.NewEmailNotifierFromConfig(to)
-	statusText := "DOWN"
-	if isUp {
-		statusText = "UP (已恢复)"
-	}
-
-	vars := map[string]string{
-		"NAME":   monitor.Name,
-		"TYPE":   monitor.Type,
-		"STATUS": statusText,
-		"MSG":    msg,
-	}
-	subject := configMap.Template("subject_template", vars)
-	if subject == "" {
-		subject = "[uptime_ng] " + monitor.Name + " - " + statusText
-	}
-	body := configMap.Template("body_template", vars)
-	if body == "" {
-		body = notifier.FormatEmailTemplate(monitor, statusText, msg)
-	}
-
-	if err := n.Send(subject, body); err != nil {
-		log.Printf("[email] failed to send to %s: %v", to, err)
+	n := notifier.NewEmailNotifierFromConfig(content.To)
+	if err := n.Send(content.Subject, content.Body); err != nil {
+		log.Printf("[email] failed to send to %s: %v", content.To, err)
 	} else {
-		log.Printf("[email] Alert sent for %s to %s", monitor.Name, to)
+		log.Printf("[email] Alert sent for %s to %s", monitor.Name, content.To)
 	}
 }
 

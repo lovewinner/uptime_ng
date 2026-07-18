@@ -25,9 +25,18 @@ type WSHub struct {
 }
 
 type WSMessage struct {
-	Type    string      `json:"type"`
-	Payload interface{} `json:"payload"`
-	UserID  uint        `json:"-"` // internal routing
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
+	UserID  uint   `json:"-"` // internal routing
+}
+
+type wsOutboundMessage struct {
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
+}
+
+type wsInboundMessage struct {
+	Type string `json:"type"`
 }
 
 var upgrader = websocket.Upgrader{
@@ -66,7 +75,7 @@ func (h *WSHub) Run() {
 			h.mu.Unlock()
 
 		case msg := <-h.Broadcast:
-			h.mu.RLock()
+			h.mu.Lock()
 			for client := range h.Clients {
 				if msg.UserID == 0 || msg.UserID == client.UserID {
 					select {
@@ -77,12 +86,12 @@ func (h *WSHub) Run() {
 					}
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
 
-func (h *WSHub) SendToUser(userID uint, msgType string, payload interface{}) {
+func (h *WSHub) SendToUser(userID uint, msgType string, payload any) {
 	h.Broadcast <- WSMessage{
 		Type:    msgType,
 		Payload: payload,
@@ -91,11 +100,7 @@ func (h *WSHub) SendToUser(userID uint, msgType string, payload interface{}) {
 }
 
 func formatWSMessage(msg WSMessage) []byte {
-	raw := map[string]interface{}{
-		"type":    msg.Type,
-		"payload": msg.Payload,
-	}
-	data, _ := json.Marshal(raw)
+	data, _ := json.Marshal(wsOutboundMessage{Type: msg.Type, Payload: msg.Payload})
 	return data
 }
 
@@ -144,11 +149,11 @@ func (c *Client) readPump(hub *WSHub) {
 			break
 		}
 
-		var msg map[string]interface{}
+		var msg wsInboundMessage
 		if err := json.Unmarshal(message, &msg); err != nil {
 			continue
 		}
 
-		log.Printf("ws received from user %d: %v", c.UserID, msg)
+		log.Printf("ws received from user %d: %s", c.UserID, msg.Type)
 	}
 }

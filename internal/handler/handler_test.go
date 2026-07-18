@@ -311,7 +311,7 @@ func TestNotificationTestValidatesConfig(t *testing.T) {
 	db := testDB(t)
 	r, user := setupRouter(t, db, &fakeScheduler{})
 	token := authToken(t, user)
-	notif := model.Notification{UserID: user.ID, Name: "bad", Type: "feishu", Config: `{}`, Active: true}
+	notif := model.Notification{UserID: user.ID, Name: "bad", Type: model.NotificationTypeFeishu, Config: `{}`, Active: true}
 	db.Create(&notif)
 
 	resp := authedRequest(t, r, http.MethodPost, "/api/notifications/1/test", nil, token)

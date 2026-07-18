@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -82,18 +81,10 @@ func (h *MaintenanceHandler) bindWindow(c *gin.Context, userID uint, existing *m
 		badRequest(c, "invalid_request", err.Error())
 		return model.MaintenanceWindow{}, false
 	}
-	start, err := time.Parse(time.RFC3339, req.StartAt)
-	if err != nil {
-		badRequest(c, "invalid_start_at", "start_at must be RFC3339")
-		return model.MaintenanceWindow{}, false
-	}
-	end, err := time.Parse(time.RFC3339, req.EndAt)
-	if err != nil {
-		badRequest(c, "invalid_end_at", "end_at must be RFC3339")
-		return model.MaintenanceWindow{}, false
-	}
-	if !end.After(start) {
-		badRequest(c, "invalid_time_range", "end_at must be after start_at")
+
+	window, validationErr := maintenanceWindowFromRequest(req, userID, existing)
+	if validationErr != nil {
+		badRequest(c, validationErr.code, validationErr.message)
 		return model.MaintenanceWindow{}, false
 	}
 	if req.MonitorID != nil {
@@ -104,22 +95,5 @@ func (h *MaintenanceHandler) bindWindow(c *gin.Context, userID uint, existing *m
 		}
 	}
 
-	active := true
-	if existing != nil {
-		active = existing.Active
-	}
-	if req.Active != nil {
-		active = *req.Active
-	}
-	window := model.MaintenanceWindow{UserID: userID}
-	if existing != nil {
-		window = *existing
-	}
-	window.Name = req.Name
-	window.Description = req.Description
-	window.MonitorID = req.MonitorID
-	window.StartAt = start
-	window.EndAt = end
-	window.Active = active
 	return window, true
 }

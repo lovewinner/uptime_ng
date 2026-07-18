@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -121,11 +120,7 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	monitorID := c.Param("id")
 	granularity := c.DefaultQuery("granularity", "daily")
-	numStr := c.DefaultQuery("num", "30")
-	num := atoi(numStr)
-	if num <= 0 {
-		num = 30
-	}
+	num := positiveIntParam(c.DefaultQuery("num", "30"), 30)
 
 	var monitor model.Monitor
 	if err := h.DB.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
@@ -164,55 +159,21 @@ func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
 		return
 	}
 
-	type uptimeSummary struct {
-		Uptime24H float64 `json:"uptime_24h"`
-		Uptime30D float64 `json:"uptime_30d"`
-		Uptime1Y  float64 `json:"uptime_1y"`
-	}
-
 	var result uptimeSummary
 
-	// 24h: reuse fillSLAFromHeartbeats for consistency
 	sla24 := SLAResult{}
 	fillSLAFromHeartbeats(h.DB, &sla24, monitor.ID, time.Now().Add(-24*time.Hour), time.Now())
-	result.Uptime24H = sla24.UptimePercentage
-	if result.Uptime24H == 0 && sla24.TotalChecks == 0 {
-		result.Uptime24H = 1.0
-	}
+	result.Uptime24H = uptime24HFromSLA(sla24)
 
-	// 30d / 1y: compute from stat_dailies
-	computeDaily := func(days int) float64 {
-		cutoff := timeNowUnix() - int64(days)*86400
-		var stats []model.StatDaily
-		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Find(&stats)
-		var up, down uint32
-		for _, s := range stats {
-			up += s.Up
-			down += s.Down
-		}
-		return uptimeRatio(up, down)
-	}
-	result.Uptime30D = computeDaily(30)
-	result.Uptime1Y = computeDaily(365)
+	var stats30D []model.StatDaily
+	h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, timeNowUnix()-30*86400).Find(&stats30D)
+	result.Uptime30D = dailyStatsUptime(stats30D)
+
+	var stats1Y []model.StatDaily
+	h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, timeNowUnix()-365*86400).Find(&stats1Y)
+	result.Uptime1Y = dailyStatsUptime(stats1Y)
 
 	c.JSON(http.StatusOK, result)
-}
-
-func periodToDays(period string) int {
-	switch period {
-	case "day":
-		return 1
-	case "week":
-		return 7
-	case "month":
-		return 30
-	case "quarter":
-		return 90
-	case "year":
-		return 365
-	default:
-		return 1
-	}
 }
 
 func periodRange(period string, now time.Time) (time.Time, time.Time) {
@@ -301,9 +262,4 @@ func fillSLAFromHeartbeats(db *gorm.DB, result *SLAResult, monitorID uint, start
 
 func timeNowUnix() int64 {
 	return time.Now().Unix()
-}
-
-func atoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
 }

@@ -24,6 +24,9 @@ const (
 	MonitorTypePush  = "push"
 	MonitorTypeGroup = "group"
 
+	NotificationTypeFeishu = "feishu"
+	NotificationTypeEmail  = "email"
+
 	DefaultInterval         = 60
 	MinInterval             = 3
 	DefaultTimeout          = 30.0

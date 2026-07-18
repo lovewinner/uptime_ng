@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"uptime_ng/internal/model"
 )
@@ -102,9 +103,9 @@ func buildImportPreview(existingByName map[string]model.Monitor, file ExportFile
 		}
 	}
 	if preview.ConflictCount > 0 {
-		preview.Summary = "found " + itoa(preview.ConflictCount) + " conflicts, please choose a strategy"
+		preview.Summary = "found " + strconv.Itoa(preview.ConflictCount) + " conflicts, please choose a strategy"
 	} else {
-		preview.Summary = "all " + itoa(preview.NewCount) + " monitors are new, ready to import"
+		preview.Summary = "all " + strconv.Itoa(preview.NewCount) + " monitors are new, ready to import"
 	}
 	return preview
 }
