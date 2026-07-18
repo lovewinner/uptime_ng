@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import api from '@/api/http'
+import { apiErrorMessage } from '@/api/errors'
+import {
+  defaultImportStrategy,
+  initialImportStep,
+  parseImportJSON,
+  type ImportPreview,
+  type ImportResult,
+  type ImportStep,
+  type ImportStrategy,
+} from './importDialog'
 
 const props = defineProps<{
   modelValue: boolean
@@ -17,29 +27,12 @@ const visible = computed({
 })
 
 const fileInput = ref<HTMLInputElement | null>(null)
-const strategy = ref<'skip' | 'overwrite' | 'copy'>('copy')
-interface ImportPreview {
-  new_count: number
-  conflict_count: number
-  new_tags: Array<{ name: string; color: string }>
-  notifications: number
-  masked_notifications: number
-  summary: string
-}
-
-interface ImportResult {
-  imported: number
-  created: number
-  updated: number
-  skipped: number
-  errors: string[]
-}
-
+const strategy = ref<ImportStrategy>(defaultImportStrategy())
 const previewData = ref<ImportPreview | null>(null)
 const importResult = ref<ImportResult | null>(null)
 const loading = ref(false)
 const error = ref('')
-const step = ref<'upload' | 'preview' | 'result'>('upload')
+const step = ref<ImportStep>(initialImportStep())
 
 function handleFileChange() {
   error.value = ''
@@ -49,13 +42,13 @@ function handleFileChange() {
   const reader = new FileReader()
   reader.onload = async (e) => {
     try {
-      const data = JSON.parse(e.target?.result as string)
+      const data = parseImportJSON(e.target?.result as string)
       step.value = 'preview'
       loading.value = true
       const res = await api.post('/monitors/import/preview', { data, strategy: 'skip' })
       previewData.value = res.data
     } catch (err: unknown) {
-      error.value = errorMessage(err, '无效的JSON文件')
+      error.value = apiErrorMessage(err, '无效的JSON文件')
     } finally {
       loading.value = false
     }
@@ -69,30 +62,20 @@ async function executeImport() {
     const file = fileInput.value?.files?.[0]
     if (!file) return
     const text = await file.text()
-    const data = JSON.parse(text)
+    const data = parseImportJSON(text)
     const res = await api.post('/monitors/import', { data, strategy: strategy.value })
     importResult.value = res.data
     step.value = 'result'
     emit('imported')
   } catch (err: unknown) {
-    error.value = errorMessage(err, '导入失败')
+    error.value = apiErrorMessage(err, '导入失败')
   } finally {
     loading.value = false
   }
 }
 
-function errorMessage(err: unknown, fallback: string): string {
-  if (typeof err === 'string') return err
-  if (typeof err === 'object' && err !== null && 'response' in err) {
-    const response = (err as { response?: { data?: { error?: string } } }).response
-    return response?.data?.error || fallback
-  }
-  if (err instanceof Error) return err.message || fallback
-  return fallback
-}
-
 function close() {
-  step.value = 'upload'
+  step.value = initialImportStep()
   previewData.value = null
   importResult.value = null
   error.value = ''

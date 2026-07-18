@@ -4,6 +4,15 @@ import { useMonitorStore } from '@/stores/monitor'
 import { ElMessage } from 'element-plus'
 import type { Monitor } from '@/stores/monitor'
 import type { MonitorPayload } from '@/api/types'
+import { apiErrorMessage } from '@/api/errors'
+import {
+  DEFAULT_STATUS_CODES,
+  addStatusCodeTag,
+  defaultMonitorPayload,
+  monitorPayloadFromMonitor,
+  removeStatusCodeTag,
+  statusCodesFromMonitor,
+} from './monitorForm'
 
 const props = defineProps<{
   modelValue: boolean
@@ -24,57 +33,9 @@ const dialogVisible = computed({
 
 const formRef = ref()
 const saving = ref(false)
-const statusTags = ref<string[]>(['200-299'])
+const statusTags = ref<string[]>([...DEFAULT_STATUS_CODES])
 
-const form = ref<MonitorPayload>({
-  name: '',
-  description: '',
-  type: 'ping',
-  group_id: null,
-  url: '',
-  hostname: '',
-  port: 80,
-  method: 'GET',
-  interval: 60,
-  timeout: 30,
-  max_retries: 0,
-  retry_interval: 60,
-  resend_interval: 0,
-  headers: '',
-  body: '',
-  keyword: '',
-  invert_keyword: false,
-  ignore_tls: false,
-  upside_down: false,
-  max_redirects: 10,
-  auth_method: '',
-  basic_auth_user: '',
-  basic_auth_pass: '',
-  auth_workstation: '',
-  auth_domain: '',
-  bearer_token: '',
-  tls_key: '',
-  tls_cert: '',
-  tls_ca: '',
-  oauth_client_id: '',
-  oauth_client_secret: '',
-  oauth_token_url: '',
-  oauth_scopes: '',
-  oauth_auth_method: 'body',
-  oauth_audience: '',
-  dns_resolve_type: 'A',
-  dns_resolve_server: '',
-  http_body_encoding: 'json',
-  retry_only_on_status_code: false,
-  cache_bust: false,
-  save_response: false,
-  save_error_response: true,
-  response_max_length: 4096,
-  ping_count: 4,
-  ping_per_request_timeout: 1000,
-  accepted_status_codes: ['200-299'],
-  notification_ids: [] as number[],
-})
+const form = ref<MonitorPayload>(defaultMonitorPayload())
 
 const isEdit = computed(() => !!props.monitor?.id)
 
@@ -119,15 +80,12 @@ const bodyEncodingOptions = [
 const dnsTypeOptions = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'].map((value) => ({ label: value, value }))
 
 function addStatusCode(value: string) {
-  const trimmed = value.trim()
-  if (trimmed && !statusTags.value.includes(trimmed)) {
-    statusTags.value.push(trimmed)
-    form.value.accepted_status_codes = [...statusTags.value]
-  }
+  statusTags.value = addStatusCodeTag(statusTags.value, value)
+  form.value.accepted_status_codes = [...statusTags.value]
 }
 
 function removeStatusCode(tag: string) {
-  statusTags.value = statusTags.value.filter(t => t !== tag)
+  statusTags.value = removeStatusCodeTag(statusTags.value, tag)
   form.value.accepted_status_codes = [...statusTags.value]
 }
 
@@ -141,107 +99,11 @@ watch(
   () => props.monitor,
   (val) => {
     if (val) {
-      form.value = {
-        name: val.name || '',
-        description: val.description || '',
-        type: val.type || 'http',
-        group_id: val.group_id ?? null,
-        url: val.url || '',
-        hostname: val.hostname || '',
-        port: val.port || 80,
-        method: val.method || 'GET',
-        interval: val.interval || 60,
-        timeout: val.timeout || 30,
-        max_retries: val.max_retries || 0,
-        retry_interval: val.retry_interval || 60,
-        resend_interval: val.resend_interval || 0,
-        headers: val.headers || '',
-        body: val.body || '',
-        keyword: val.keyword || '',
-        invert_keyword: val.invert_keyword || false,
-        ignore_tls: val.ignore_tls || false,
-        upside_down: val.upside_down || false,
-        max_redirects: val.max_redirects || 10,
-        auth_method: val.auth_method || '',
-        basic_auth_user: val.basic_auth_user || '',
-        basic_auth_pass: '',
-        auth_workstation: val.auth_workstation || '',
-        auth_domain: val.auth_domain || '',
-        bearer_token: '',
-        tls_key: '',
-        tls_cert: '',
-        tls_ca: val.tls_ca || '',
-        oauth_client_id: '',
-        oauth_client_secret: '',
-        oauth_token_url: val.oauth_token_url || '',
-        oauth_scopes: val.oauth_scopes || '',
-        oauth_auth_method: val.oauth_auth_method || 'body',
-        oauth_audience: val.oauth_audience || '',
-        dns_resolve_type: val.dns_resolve_type || 'A',
-        dns_resolve_server: val.dns_resolve_server || '',
-        http_body_encoding: val.http_body_encoding || 'json',
-        retry_only_on_status_code: val.retry_only_on_status_code || false,
-        cache_bust: val.cache_bust || false,
-        save_response: val.save_response || false,
-        save_error_response: val.save_error_response || false,
-        response_max_length: val.response_max_length || 4096,
-        ping_count: val.ping_count || 4,
-        ping_per_request_timeout: val.ping_per_request_timeout || 1000,
-        accepted_status_codes: [...(val.accepted_status_codes || ['200-299'])],
-        notification_ids: [...(val.notification_ids || [])],
-      }
-      statusTags.value = [...(val.accepted_status_codes || ['200-299'])]
+      form.value = monitorPayloadFromMonitor(val)
+      statusTags.value = statusCodesFromMonitor(val)
     } else {
-      form.value = {
-        name: '',
-        description: '',
-        type: 'ping',
-        group_id: null,
-        url: '',
-        hostname: '',
-        port: 80,
-        method: 'GET',
-        interval: 60,
-        timeout: 30,
-        max_retries: 0,
-        retry_interval: 60,
-        resend_interval: 0,
-        headers: '',
-        body: '',
-        keyword: '',
-        invert_keyword: false,
-        ignore_tls: false,
-        upside_down: false,
-        max_redirects: 10,
-        auth_method: '',
-        basic_auth_user: '',
-        basic_auth_pass: '',
-        auth_workstation: '',
-        auth_domain: '',
-        bearer_token: '',
-        tls_key: '',
-        tls_cert: '',
-        tls_ca: '',
-        oauth_client_id: '',
-        oauth_client_secret: '',
-        oauth_token_url: '',
-        oauth_scopes: '',
-        oauth_auth_method: 'body',
-        oauth_audience: '',
-        dns_resolve_type: 'A',
-        dns_resolve_server: '',
-        http_body_encoding: 'json',
-        retry_only_on_status_code: false,
-        cache_bust: false,
-        save_response: false,
-        save_error_response: true,
-        response_max_length: 4096,
-        ping_count: 4,
-        ping_per_request_timeout: 1000,
-        accepted_status_codes: ['200-299'],
-        notification_ids: [],
-      }
-      statusTags.value = ['200-299']
+      form.value = defaultMonitorPayload()
+      statusTags.value = [...DEFAULT_STATUS_CODES]
     }
   },
   { immediate: true },
@@ -270,7 +132,7 @@ async function handleSubmit() {
     }
     emit('saved')
   } catch (e: unknown) {
-    ElMessage.error(errorMessage(e, '保存失败'))
+    ElMessage.error(apiErrorMessage(e, '保存失败'))
   } finally {
     saving.value = false
   }
@@ -287,13 +149,6 @@ function handleStatusCodeInput(event: Event) {
   target.value = ''
 }
 
-function errorMessage(e: unknown, fallback: string): string {
-  if (typeof e === 'object' && e !== null && 'response' in e) {
-    const response = (e as { response?: { data?: { error?: string } } }).response
-    return response?.data?.error || fallback
-  }
-  return fallback
-}
 </script>
 
 <template>

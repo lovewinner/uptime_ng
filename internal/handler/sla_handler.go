@@ -37,6 +37,16 @@ type SLAResult struct {
 	TotalDowntimeSec uint32  `json:"total_downtime_seconds"`
 }
 
+type uptimeDataPoint struct {
+	Timestamp int64   `json:"timestamp"`
+	Uptime    float64 `json:"uptime"`
+	AvgPing   float64 `json:"avg_ping"`
+	MinPing   float64 `json:"min_ping"`
+	MaxPing   float64 `json:"max_ping"`
+	Up        uint32  `json:"up"`
+	Down      uint32  `json:"down"`
+}
+
 func (h *SLAHandler) GetUptime(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	monitorID := c.Param("id")
@@ -123,61 +133,24 @@ func (h *SLAHandler) GetUptimeData(c *gin.Context) {
 		return
 	}
 
-	type dataPoint struct {
-		Timestamp int64   `json:"timestamp"`
-		Uptime    float64 `json:"uptime"`
-		AvgPing   float64 `json:"avg_ping"`
-		MinPing   float64 `json:"min_ping"`
-		MaxPing   float64 `json:"max_ping"`
-		Up        uint32  `json:"up"`
-		Down      uint32  `json:"down"`
-	}
-
 	switch granularity {
 	case "minutely":
 		var stats []model.StatMinutely
 		cutoff := timeNowUnix() - int64(num)*60
 		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats)
-		points := make([]dataPoint, len(stats))
-		for i, s := range stats {
-			pts := s.Up + s.Down
-			var uptime float64 = 1.0
-			if pts > 0 {
-				uptime = float64(s.Up) / float64(pts)
-			}
-			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, MinPing: s.MinPing, MaxPing: s.MaxPing, Up: s.Up, Down: s.Down}
-		}
-		c.JSON(http.StatusOK, points)
+		c.JSON(http.StatusOK, minutelyDataPoints(stats))
 
 	case "hourly":
 		var stats []model.StatHourly
 		cutoff := timeNowUnix() - int64(num)*3600
 		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats)
-		points := make([]dataPoint, len(stats))
-		for i, s := range stats {
-			pts := s.Up + s.Down
-			var uptime float64 = 1.0
-			if pts > 0 {
-				uptime = float64(s.Up) / float64(pts)
-			}
-			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, MinPing: s.MinPing, MaxPing: s.MaxPing, Up: s.Up, Down: s.Down}
-		}
-		c.JSON(http.StatusOK, points)
+		c.JSON(http.StatusOK, hourlyDataPoints(stats))
 
 	default:
 		var stats []model.StatDaily
 		cutoff := timeNowUnix() - int64(num)*86400
 		h.DB.Where("monitor_id = ? AND timestamp >= ?", monitorID, cutoff).Order("timestamp ASC").Find(&stats)
-		points := make([]dataPoint, len(stats))
-		for i, s := range stats {
-			pts := s.Up + s.Down
-			var uptime float64 = 1.0
-			if pts > 0 {
-				uptime = float64(s.Up) / float64(pts)
-			}
-			points[i] = dataPoint{Timestamp: s.Timestamp, Uptime: uptime, AvgPing: s.AvgPing, MinPing: s.MinPing, MaxPing: s.MaxPing, Up: s.Up, Down: s.Down}
-		}
-		c.JSON(http.StatusOK, points)
+		c.JSON(http.StatusOK, dailyDataPoints(stats))
 	}
 }
 
@@ -217,11 +190,7 @@ func (h *SLAHandler) GetUptimeSummary(c *gin.Context) {
 			up += s.Up
 			down += s.Down
 		}
-		total := up + down
-		if total > 0 {
-			return float64(up) / float64(total)
-		}
-		return 1.0
+		return uptimeRatio(up, down)
 	}
 	result.Uptime30D = computeDaily(30)
 	result.Uptime1Y = computeDaily(365)

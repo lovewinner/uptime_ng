@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
+import { apiErrorMessage } from '@/api/errors'
 import { useMonitorStore } from '@/stores/monitor'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { MaintenanceWindow } from '@/api/types'
@@ -74,7 +75,7 @@ async function submit() {
     ElMessage.success('已保存')
     await fetchWindows()
   } catch (e: unknown) {
-    ElMessage.error(errorMessage(e, '保存失败'))
+    ElMessage.error(apiErrorMessage(e, '保存失败'))
   } finally {
     saving.value = false
   }
@@ -98,14 +99,6 @@ function monitorName(id: number | null) {
 
 function toRFC3339(value: string) {
   return new Date(value).toISOString()
-}
-
-function errorMessage(e: unknown, fallback: string): string {
-  if (typeof e === 'object' && e !== null && 'response' in e) {
-    const response = (e as { response?: { data?: { error?: string } } }).response
-    return response?.data?.error || fallback
-  }
-  return fallback
 }
 
 onMounted(async () => {

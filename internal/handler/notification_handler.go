@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -134,8 +133,8 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 		return
 	}
 
-	var configMap map[string]string
-	if err := json.Unmarshal([]byte(notif.Config), &configMap); err != nil {
+	configMap, err := notifier.ParseNotificationConfig(notif.Config)
+	if err != nil {
 		badRequest(c, "invalid_notification_config", "invalid notification config json")
 		return
 	}
@@ -143,7 +142,7 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 	msg := fmt.Sprintf("来自 uptime_ng 的测试消息。通知: %s (%s)", notif.Name, notif.Type)
 	switch notif.Type {
 	case "feishu":
-		webhookURL := configMap["webhook_url"]
+		webhookURL := configMap.WebhookURL()
 		if webhookURL == "" {
 			badRequest(c, "missing_webhook_url", "missing webhook_url")
 			return
@@ -153,13 +152,7 @@ func (h *NotificationHandler) Test(c *gin.Context) {
 			return
 		}
 	case "email":
-		to := configMap["email"]
-		if to == "" {
-			to = configMap["to"]
-		}
-		if cc := configMap["cc"]; cc != "" {
-			to += "," + cc
-		}
+		to := configMap.EmailRecipients()
 		if to == "" {
 			badRequest(c, "missing_email_recipient", "missing email recipient")
 			return

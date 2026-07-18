@@ -1,9 +1,7 @@
 package engine
 
 import (
-	"encoding/json"
 	"log"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -64,10 +62,12 @@ func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat,
 }
 
 func (d *NotifyDispatch) sendFeishu(notif model.Notification, monitor *model.Monitor, isUp bool, msg string) {
-	var configMap map[string]string
-	json.Unmarshal([]byte(notif.Config), &configMap)
-
-	webhookURL := configMap["webhook_url"]
+	configMap, err := notifier.ParseNotificationConfig(notif.Config)
+	if err != nil {
+		log.Printf("[feishu] notification %s has invalid config: %v", notif.Name, err)
+		return
+	}
+	webhookURL := configMap.WebhookURL()
 	if webhookURL == "" {
 		log.Printf("[feishu] notification %s has no webhook_url", notif.Name)
 		return
@@ -83,16 +83,12 @@ func (d *NotifyDispatch) sendEmail(notif model.Notification, monitor *model.Moni
 		return
 	}
 
-	var configMap map[string]string
-	json.Unmarshal([]byte(notif.Config), &configMap)
-
-	to := configMap["email"] // or "to"
-	if to == "" {
-		to = configMap["to"]
+	configMap, err := notifier.ParseNotificationConfig(notif.Config)
+	if err != nil {
+		log.Printf("[email] notification %s has invalid config: %v", notif.Name, err)
+		return
 	}
-	if cc := configMap["cc"]; cc != "" {
-		to += "," + cc
-	}
+	to := configMap.EmailRecipients()
 	if to == "" {
 		log.Printf("[email] notification %s has no recipient", notif.Name)
 		return
@@ -110,11 +106,11 @@ func (d *NotifyDispatch) sendEmail(notif model.Notification, monitor *model.Moni
 		"STATUS": statusText,
 		"MSG":    msg,
 	}
-	subject := formatNotifyTemplate(configMap["subject_template"], vars)
+	subject := configMap.Template("subject_template", vars)
 	if subject == "" {
 		subject = "[uptime_ng] " + monitor.Name + " - " + statusText
 	}
-	body := formatNotifyTemplate(configMap["body_template"], vars)
+	body := configMap.Template("body_template", vars)
 	if body == "" {
 		body = notifier.FormatEmailTemplate(monitor, statusText, msg)
 	}
@@ -124,17 +120,6 @@ func (d *NotifyDispatch) sendEmail(notif model.Notification, monitor *model.Moni
 	} else {
 		log.Printf("[email] Alert sent for %s to %s", monitor.Name, to)
 	}
-}
-
-func formatNotifyTemplate(tpl string, vars map[string]string) string {
-	result := strings.TrimSpace(tpl)
-	if result == "" {
-		return ""
-	}
-	for k, v := range vars {
-		result = strings.ReplaceAll(result, "{{"+k+"}}", v)
-	}
-	return result
 }
 
 func (d *NotifyDispatch) markIncident(db *gorm.DB, monitorID uint, monitorName string, prevStatus, newStatus uint16, msg string) {

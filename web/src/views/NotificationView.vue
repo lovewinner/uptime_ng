@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, reactive, computed } from 'vue'
 import api from '@/api/http'
+import { apiErrorMessage } from '@/api/errors'
 import { ElMessageBox } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import type { Notification } from '@/api/types'
@@ -81,7 +82,7 @@ async function handleTest(notif: Notification) {
     const res = await api.post(`/notifications/${notif.id}/test`)
     ElMessage.success(res.data?.message || '测试消息已发送')
   } catch (e: unknown) {
-    ElMessage.error(errorMessage(e, '测试失败'))
+    ElMessage.error(apiErrorMessage(e, '测试失败'))
   }
 }
 
@@ -108,18 +109,10 @@ async function handleSubmit() {
     ElMessage.success(isEdit.value ? '已更新' : '已创建')
     await fetchNotifications()
   } catch (e: unknown) {
-    ElMessage.error(errorMessage(e, '保存失败'))
+    ElMessage.error(apiErrorMessage(e, '保存失败'))
   } finally {
     saving.value = false
   }
-}
-
-function errorMessage(e: unknown, fallback: string): string {
-  if (typeof e === 'object' && e !== null && 'response' in e) {
-    const response = (e as { response?: { data?: { error?: string } } }).response
-    return response?.data?.error || fallback
-  }
-  return fallback
 }
 
 onMounted(() => {

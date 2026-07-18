@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 
 	"gorm.io/gorm"
 )
@@ -193,12 +192,4 @@ func GetFeishuMessages() []string {
 		"Monitor {{NAME}} is DOWN: {{MSG}}",
 		"Monitor {{NAME}} recovered: {{MSG}}",
 	}
-}
-
-func formatTemplate(tpl string, vars map[string]string) string {
-	result := tpl
-	for k, v := range vars {
-		result = strings.ReplaceAll(result, "{{"+k+"}}", v)
-	}
-	return result
 }

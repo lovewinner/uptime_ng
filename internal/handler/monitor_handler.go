@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -88,95 +87,13 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		badRequest(c, "invalid_request", err.Error())
 		return
 	}
-	if req.Interval < model.MinInterval {
-		req.Interval = model.DefaultInterval
-	}
-	if req.Timeout <= 0 {
-		req.Timeout = model.DefaultTimeout
-	}
-	if req.ResponseMaxLength == 0 {
-		req.ResponseMaxLength = model.DefaultResponseMaxLen
-	}
-	if req.MaxRedirects == 0 {
-		req.MaxRedirects = model.DefaultHTTPMaxRedirects
-	}
+	normalizeMonitorRequest(&req)
 	if err := h.validateMonitorRequest(userID.(uint), 0, req); err != nil {
 		badRequest(c, err.code, err.message)
 		return
 	}
 
-	var acceptedStatusCodesJSON string
-	if len(req.AcceptedStatusCodes) > 0 {
-		bytes, _ := json.Marshal(req.AcceptedStatusCodes)
-		acceptedStatusCodesJSON = string(bytes)
-	} else {
-		acceptedStatusCodesJSON = `["200-299"]`
-	}
-
-	expiryNotification := true
-	if req.ExpiryNotification != nil {
-		expiryNotification = *req.ExpiryNotification
-	}
-
-	monitor := model.Monitor{
-		UserID:                userID.(uint),
-		Name:                  req.Name,
-		Description:           req.Description,
-		Type:                  req.Type,
-		GroupID:               req.GroupID,
-		Active:                true,
-		URL:                   req.URL,
-		Hostname:              req.Hostname,
-		Port:                  req.Port,
-		Method:                req.Method,
-		Interval:              req.Interval,
-		Timeout:               req.Timeout,
-		MaxRetries:            req.MaxRetries,
-		RetryInterval:         req.RetryInterval,
-		ResendInterval:        req.ResendInterval,
-		Headers:               req.Headers,
-		Body:                  req.Body,
-		AcceptedStatusCodes:   acceptedStatusCodesJSON,
-		Keyword:               req.Keyword,
-		InvertKeyword:         req.InvertKeyword,
-		IgnoreTLS:             req.IgnoreTLS,
-		UpsideDown:            req.UpsideDown,
-		MaxRedirects:          req.MaxRedirects,
-		AuthMethod:            req.AuthMethod,
-		BasicAuthUser:         req.BasicAuthUser,
-		BasicAuthPass:         req.BasicAuthPass,
-		BearerToken:           req.BearerToken,
-		AuthWorkstation:       req.AuthWorkstation,
-		AuthDomain:            req.AuthDomain,
-		TLSKey:                req.TLSKey,
-		TLSCert:               req.TLSCert,
-		TLSCa:                 req.TLSCa,
-		OAuthClientID:         req.OAuthClientID,
-		OAuthClientSecret:     req.OAuthClientSecret,
-		OAuthTokenURL:         req.OAuthTokenURL,
-		OAuthScopes:           req.OAuthScopes,
-		OAuthAuthMethod:       req.OAuthAuthMethod,
-		OAuthAudience:         req.OAuthAudience,
-		DNSResolveType:        req.DNSResolveType,
-		DNSResolveServer:      req.DNSResolveServer,
-		PacketSize:            req.PacketSize,
-		ExpiryNotification:    expiryNotification,
-		HTTPBodyEncoding:      req.HTTPBodyEncoding,
-		RetryOnlyOnStatusCode: req.RetryOnlyOnStatusCode,
-		CacheBust:             req.CacheBust,
-		SaveResponse:          req.SaveResponse,
-		SaveErrorResponse:     req.SaveErrorResponse,
-		ResponseMaxLength:     req.ResponseMaxLength,
-		PingNumeric:           req.PingNumeric,
-		PingCount:             req.PingCount,
-		PingPerRequestTimeout: req.PingPerRequestTimeout,
-	}
-
-	if monitor.Port == 0 && req.Port == 0 {
-		monitor.Port = 0
-	} else {
-		monitor.Port = req.Port
-	}
+	monitor := newMonitorFromRequest(userID.(uint), req)
 
 	tx := h.DB.Begin()
 
@@ -186,27 +103,7 @@ func (h *MonitorHandler) Create(c *gin.Context) {
 		return
 	}
 
-	for _, nid := range req.NotificationIDs {
-		mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
-		tx.Create(&mn)
-	}
-
-	for i, tagName := range req.TagNames {
-		if tagName == "" {
-			continue
-		}
-		var tag model.Tag
-		if err := tx.Where("name = ?", tagName).First(&tag).Error; err != nil {
-			color := "#409EFF"
-			if i < len(req.TagColors) && req.TagColors[i] != "" {
-				color = req.TagColors[i]
-			}
-			tag = model.Tag{Name: tagName, Color: color}
-			tx.Create(&tag)
-		}
-		mt := model.MonitorTag{MonitorID: monitor.ID, TagID: tag.ID, Value: tagName}
-		tx.Create(&mt)
-	}
+	attachMonitorAssociations(tx, monitor.ID, req.NotificationIDs, req.TagNames, req.TagColors)
 
 	if err := tx.Commit().Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_create_commit_failed", err.Error())
@@ -299,79 +196,14 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 		badRequest(c, "invalid_request", err.Error())
 		return
 	}
-	if req.Interval < model.MinInterval {
-		req.Interval = model.DefaultInterval
-	}
-	if req.Timeout <= 0 {
-		req.Timeout = model.DefaultTimeout
-	}
-	if req.ResponseMaxLength == 0 {
-		req.ResponseMaxLength = model.DefaultResponseMaxLen
-	}
-	if req.MaxRedirects == 0 {
-		req.MaxRedirects = model.DefaultHTTPMaxRedirects
-	}
+	normalizeMonitorRequest(&req)
 	if err := h.validateMonitorRequest(userID.(uint), monitor.ID, req); err != nil {
 		badRequest(c, err.code, err.message)
 		return
 	}
 
 	wasGroup := monitor.Type == model.MonitorTypeGroup
-	monitor.Name = req.Name
-	monitor.Description = req.Description
-	monitor.Type = req.Type
-	monitor.GroupID = req.GroupID
-	monitor.URL = req.URL
-	monitor.Hostname = req.Hostname
-	monitor.Port = req.Port
-	monitor.Method = req.Method
-	monitor.Interval = req.Interval
-	monitor.Timeout = req.Timeout
-	monitor.MaxRetries = req.MaxRetries
-	monitor.RetryInterval = req.RetryInterval
-	monitor.ResendInterval = req.ResendInterval
-	monitor.Headers = req.Headers
-	monitor.Body = req.Body
-	monitor.AuthMethod = req.AuthMethod
-	monitor.BasicAuthUser = req.BasicAuthUser
-	monitor.BasicAuthPass = req.BasicAuthPass
-	monitor.BearerToken = req.BearerToken
-	monitor.AuthWorkstation = req.AuthWorkstation
-	monitor.AuthDomain = req.AuthDomain
-	monitor.TLSKey = req.TLSKey
-	monitor.TLSCert = req.TLSCert
-	monitor.TLSCa = req.TLSCa
-	monitor.OAuthClientID = req.OAuthClientID
-	monitor.OAuthClientSecret = req.OAuthClientSecret
-	monitor.OAuthTokenURL = req.OAuthTokenURL
-	monitor.OAuthScopes = req.OAuthScopes
-	monitor.OAuthAuthMethod = req.OAuthAuthMethod
-	monitor.OAuthAudience = req.OAuthAudience
-	monitor.IgnoreTLS = req.IgnoreTLS
-	monitor.UpsideDown = req.UpsideDown
-	monitor.Keyword = req.Keyword
-	monitor.InvertKeyword = req.InvertKeyword
-	monitor.MaxRedirects = req.MaxRedirects
-	monitor.DNSResolveType = req.DNSResolveType
-	monitor.DNSResolveServer = req.DNSResolveServer
-	monitor.PacketSize = req.PacketSize
-	if req.ExpiryNotification != nil {
-		monitor.ExpiryNotification = *req.ExpiryNotification
-	}
-	monitor.HTTPBodyEncoding = req.HTTPBodyEncoding
-	monitor.RetryOnlyOnStatusCode = req.RetryOnlyOnStatusCode
-	monitor.CacheBust = req.CacheBust
-	monitor.SaveResponse = req.SaveResponse
-	monitor.SaveErrorResponse = req.SaveErrorResponse
-	monitor.ResponseMaxLength = req.ResponseMaxLength
-	monitor.PingNumeric = req.PingNumeric
-	monitor.PingCount = req.PingCount
-	monitor.PingPerRequestTimeout = req.PingPerRequestTimeout
-
-	if len(req.AcceptedStatusCodes) > 0 {
-		bytes, _ := json.Marshal(req.AcceptedStatusCodes)
-		monitor.AcceptedStatusCodes = string(bytes)
-	}
+	applyMonitorRequest(&monitor, req, false)
 
 	tx := h.DB.Begin()
 	if wasGroup && monitor.Type != model.MonitorTypeGroup {
@@ -383,32 +215,7 @@ func (h *MonitorHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if req.NotificationIDs != nil {
-		tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorNotification{})
-		for _, nid := range req.NotificationIDs {
-			mn := model.MonitorNotification{MonitorID: monitor.ID, NotificationID: nid}
-			tx.Create(&mn)
-		}
-	}
-
-	if req.TagNames != nil {
-		tx.Where("monitor_id = ?", monitor.ID).Delete(&model.MonitorTag{})
-		for i, tagName := range req.TagNames {
-			if tagName == "" {
-				continue
-			}
-			var tag model.Tag
-			if err := tx.Where("name = ?", tagName).First(&tag).Error; err != nil {
-				color := "#409EFF"
-				if i < len(req.TagColors) && req.TagColors[i] != "" {
-					color = req.TagColors[i]
-				}
-				tag = model.Tag{Name: tagName, Color: color}
-				tx.Create(&tag)
-			}
-			tx.Create(&model.MonitorTag{MonitorID: monitor.ID, TagID: tag.ID, Value: tagName})
-		}
-	}
+	refreshMonitorAssociations(tx, monitor.ID, req.NotificationIDs, req.TagNames, req.TagColors, req.NotificationIDs != nil, req.TagNames != nil)
 
 	if err := tx.Commit().Error; err != nil {
 		errorResponse(c, http.StatusInternalServerError, "monitor_update_commit_failed", err.Error())

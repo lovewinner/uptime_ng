@@ -192,47 +192,18 @@ func (r *MonitorRunner) beat() {
 	var previousBeat model.Heartbeat
 	r.DB.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&previousBeat)
 
-	isFirstBeat := previousBeat.ID == 0
-	previousStatus := previousBeat.Status
-	if isFirstBeat {
-		previousStatus = model.StatusUP
-	}
-
-	beat.DownCount = previousBeat.DownCount
-	beat.Retries = previousBeat.Retries
-
-	if result.Status == model.StatusDown {
-		canRetry := !monitor.RetryOnlyOnStatusCode || result.HTTPStatus > 0
-		if canRetry && monitor.MaxRetries > 0 && beat.Retries < monitor.MaxRetries {
-			beat.Retries++
-			beat.Status = model.StatusPending
-		}
-		beat.DownCount++
-	} else {
-		beat.Retries = 0
-	}
-
-	isImportant := isImportantBeat(isFirstBeat, previousStatus, beat.Status)
-	beat.Important = isImportant
-
-	if isImportant {
-		beat.DownCount = 0
-		r.sendNotification(isFirstBeat, previousStatus, beat)
+	transition := applyCheckHeartbeatState(&beat, previousBeat, monitor, result)
+	if beat.Important {
+		r.sendNotification(transition.isFirstBeat, transition.previousStatus, beat)
 	} else if beat.Status == model.StatusDown && monitor.ResendInterval > 0 {
 		if r.shouldResendDownNotification(now, monitor.ResendInterval) {
 			beat.Important = true
-			r.sendNotification(isFirstBeat, previousStatus, beat)
+			r.sendNotification(transition.isFirstBeat, transition.previousStatus, beat)
 			beat.DownCount = 0
 		}
 	}
 
-	r.Calculator.Update(beat.Status, beat.PingMS, now)
-
-	r.DB.Create(&beat)
-
-	if r.Publisher != nil {
-		r.Publisher.SendToUser(monitor.UserID, "heartbeat", beat)
-	}
+	r.persistAndPublishHeartbeat(beat, now)
 }
 
 func (r *MonitorRunner) activeMaintenanceWindow(monitor *model.Monitor, now time.Time) (model.MaintenanceWindow, bool) {
@@ -253,10 +224,7 @@ func (r *MonitorRunner) maintenanceBeat(window model.MaintenanceWindow) {
 		Time:      now,
 	}
 	r.Calculator.Update(beat.Status, nil, now)
-	r.DB.Create(&beat)
-	if r.Publisher != nil {
-		r.Publisher.SendToUser(r.Monitor.UserID, "heartbeat", beat)
-	}
+	r.persistAndPublishHeartbeat(beat, now)
 }
 
 func (r *MonitorRunner) groupBeat() {
@@ -278,31 +246,19 @@ func (r *MonitorRunner) groupBeat() {
 	var previousBeat model.Heartbeat
 	r.DB.Where("monitor_id = ?", monitor.ID).Order("time DESC").First(&previousBeat)
 
-	isFirstBeat := previousBeat.ID == 0
-	previousStatus := previousBeat.Status
-	if isFirstBeat {
-		previousStatus = model.StatusUP
-	}
-
-	beat.DownCount = previousBeat.DownCount
-	beat.Retries = previousBeat.Retries
-	if beat.Status == model.StatusDown {
-		beat.DownCount++
-	} else {
-		beat.DownCount = 0
-		beat.Retries = 0
-	}
-
-	beat.Important = isImportantBeat(isFirstBeat, previousStatus, beat.Status)
+	transition := applyGroupHeartbeatState(&beat, previousBeat)
 	if beat.Important {
-		r.sendNotification(isFirstBeat, previousStatus, beat)
+		r.sendNotification(transition.isFirstBeat, transition.previousStatus, beat)
 	}
 
-	r.Calculator.Update(beat.Status, nil, now)
-	r.DB.Create(&beat)
+	r.persistAndPublishHeartbeat(beat, now)
+}
 
+func (r *MonitorRunner) persistAndPublishHeartbeat(beat model.Heartbeat, now time.Time) {
+	r.Calculator.Update(beat.Status, beat.PingMS, now)
+	r.DB.Create(&beat)
 	if r.Publisher != nil {
-		r.Publisher.SendToUser(monitor.UserID, "heartbeat", beat)
+		r.Publisher.SendToUser(r.Monitor.UserID, "heartbeat", beat)
 	}
 }
 

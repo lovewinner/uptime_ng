@@ -2,7 +2,6 @@ package notifier
 
 import (
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/smtp"
@@ -31,18 +30,6 @@ func NewEmailNotifierFromConfig(to string) *EmailNotifier {
 		Username: cfg.Username,
 		Password: cfg.Password,
 		From:     cfg.From,
-		To:       to,
-	}
-}
-
-func NewEmailNotifierFromJSON(configJSON string, to string) *EmailNotifier {
-	cfg := config.AppConfig
-	return &EmailNotifier{
-		SMTPHost: cfg.SMTP.Host,
-		SMTPPort: cfg.SMTP.Port,
-		Username: cfg.SMTP.Username,
-		Password: cfg.SMTP.Password,
-		From:     cfg.SMTP.From,
 		To:       to,
 	}
 }
@@ -145,16 +132,13 @@ func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) 
 		if notif.Type != "email" || !notif.Active {
 			continue
 		}
-		var configMap map[string]string
-		json.Unmarshal([]byte(notif.Config), &configMap)
-		to := configMap["email"]
+		configMap, err := ParseNotificationConfig(notif.Config)
+		if err != nil {
+			log.Printf("[email] notification %s has invalid config: %v", notif.Name, err)
+			continue
+		}
+		to := configMap.EmailRecipients()
 		if to == "" {
-			to = configMap["to"]
-		}
-		if cc := configMap["cc"]; cc != "" {
-			to += "," + cc
-		}
-		if strings.TrimSpace(to) == "" {
 			continue
 		}
 
@@ -163,30 +147,26 @@ func SendEmailAlert(db *gorm.DB, monitor *model.Monitor, isUp bool, msg string) 
 			statusText = "UP (已恢复)"
 		}
 
-		subject := fmt.Sprintf("[uptime_ng] %s - %s", monitor.Name, statusText)
-		htmlBody := fmt.Sprintf(`
-			<h2>监控告警</h2>
-			<table border="1" cellpadding="8" style="border-collapse:collapse">
-				<tr><td><b>监控项</b></td><td>%s</td></tr>
-				<tr><td><b>类型</b></td><td>%s</td></tr>
-				<tr><td><b>状态</b></td><td style="color:%s"><b>%s</b></td></tr>
-				<tr><td><b>详情</b></td><td>%s</td></tr>
-			</table>
-			<p style="color:#999;font-size:12px">来自 uptime_ng 监控系统</p>
-		`, monitor.Name, monitor.Type, statusColor(isUp), statusText, msg)
+		vars := map[string]string{
+			"NAME":   monitor.Name,
+			"TYPE":   monitor.Type,
+			"STATUS": statusText,
+			"MSG":    msg,
+		}
+		subject := configMap.Template("subject_template", vars)
+		if subject == "" {
+			subject = fmt.Sprintf("[uptime_ng] %s - %s", monitor.Name, statusText)
+		}
+		htmlBody := configMap.Template("body_template", vars)
+		if htmlBody == "" {
+			htmlBody = FormatEmailTemplate(monitor, statusText, msg)
+		}
 
 		n := NewEmailNotifierFromConfig(to)
 		if err := n.Send(subject, htmlBody); err != nil {
 			log.Printf("[email] failed to send: %v", err)
 		}
 	}
-}
-
-func statusColor(isUp bool) string {
-	if isUp {
-		return "green"
-	}
-	return "red"
 }
 
 func uintToStr(v int) string {

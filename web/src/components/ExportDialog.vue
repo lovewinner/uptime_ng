@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -16,15 +16,11 @@ const visible = computed({
   set: (val) => emit('update:modelValue', val),
 })
 
+const chosen = ref<'all' | 'selected'>('all')
 const selectedIds = computed(() => props.monitors.filter((m) => m.name !== '').map((m) => m.id))
 
-function exportAll() {
-  emit('export')
-  visible.value = false
-}
-
-function exportSelected() {
-  emit('export', selectedIds.value)
+function confirmExport() {
+  emit('export', chosen.value === 'selected' ? selectedIds.value : undefined)
   visible.value = false
 }
 </script>
@@ -39,12 +35,7 @@ function exportSelected() {
 
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" @click="exportAll">导出全部</el-button>
+      <el-button type="primary" @click="confirmExport">导出</el-button>
     </template>
   </el-dialog>
 </template>
-
-<script lang="ts">
-import { ref } from 'vue'
-const chosen = ref('all')
-</script>

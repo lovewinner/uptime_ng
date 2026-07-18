@@ -11,23 +11,7 @@ import (
 )
 
 func TestSchedulerRunsGroupMonitors(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if err := db.AutoMigrate(
-		&model.Monitor{},
-		&model.Heartbeat{},
-		&model.StatMinutely{},
-		&model.StatHourly{},
-		&model.StatDaily{},
-		&model.MaintenanceWindow{},
-		&model.Notification{},
-		&model.MonitorNotification{},
-		&model.Incident{},
-	); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := schedulerTestDB(t)
 	group := model.Monitor{UserID: 1, Name: "group", Type: model.MonitorTypeGroup, Active: true, Interval: model.DefaultInterval}
 	if err := db.Create(&group).Error; err != nil {
 		t.Fatalf("create group: %v", err)
@@ -41,23 +25,7 @@ func TestSchedulerRunsGroupMonitors(t *testing.T) {
 }
 
 func TestGroupBeatPersistsMaintenanceStatus(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if err := db.AutoMigrate(
-		&model.Monitor{},
-		&model.Heartbeat{},
-		&model.StatMinutely{},
-		&model.StatHourly{},
-		&model.StatDaily{},
-		&model.MaintenanceWindow{},
-		&model.Notification{},
-		&model.MonitorNotification{},
-		&model.Incident{},
-	); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := schedulerTestDB(t)
 	group := model.Monitor{UserID: 1, Name: "group", Type: model.MonitorTypeGroup, Active: true, Interval: model.DefaultInterval}
 	db.Create(&group)
 	db.Create(&model.MaintenanceWindow{
@@ -82,23 +50,7 @@ func TestGroupBeatPersistsMaintenanceStatus(t *testing.T) {
 }
 
 func TestGroupBeatPersistsAggregatedStatus(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if err := db.AutoMigrate(
-		&model.Monitor{},
-		&model.Heartbeat{},
-		&model.StatMinutely{},
-		&model.StatHourly{},
-		&model.StatDaily{},
-		&model.MaintenanceWindow{},
-		&model.Notification{},
-		&model.MonitorNotification{},
-		&model.Incident{},
-	); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := schedulerTestDB(t)
 	group := model.Monitor{UserID: 1, Name: "group", Type: model.MonitorTypeGroup, Active: true, Interval: model.DefaultInterval}
 	if err := db.Create(&group).Error; err != nil {
 		t.Fatalf("create group: %v", err)
@@ -124,4 +76,26 @@ func TestGroupBeatPersistsAggregatedStatus(t *testing.T) {
 	if beat.Status != model.StatusUP {
 		t.Fatalf("status=%d want UP", beat.Status)
 	}
+}
+
+func schedulerTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&model.Monitor{},
+		&model.Heartbeat{},
+		&model.StatMinutely{},
+		&model.StatHourly{},
+		&model.StatDaily{},
+		&model.MaintenanceWindow{},
+		&model.Notification{},
+		&model.MonitorNotification{},
+		&model.Incident{},
+	); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
 }

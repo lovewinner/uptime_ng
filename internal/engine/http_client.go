@@ -17,22 +17,10 @@ import (
 	"uptime_ng/internal/model"
 )
 
-type HTTPClient struct {
-	client *http.Client
-}
+type HTTPClient struct{}
 
 func NewHTTPClient() *HTTPClient {
-	return &HTTPClient{
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return fmt.Errorf("stopped after 10 redirects")
-				}
-				return nil
-			},
-		},
-	}
+	return &HTTPClient{}
 }
 
 func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
@@ -57,60 +45,19 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 		}, nil
 	}
 
-	maxRedirects := int(monitor.MaxRedirects)
-	if maxRedirects <= 0 {
-		maxRedirects = model.DefaultHTTPMaxRedirects
-	}
-
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxRedirects)
-			}
-			return nil
-		},
-	}
-
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: monitor.IgnoreTLS,
-	}
-	if monitor.AuthMethod == "mtls" {
-		cert, err := tls.X509KeyPair([]byte(monitor.TLSCert), []byte(monitor.TLSKey))
-		if err != nil {
-			return &CheckResult{Status: model.StatusDown, PingMS: 0, Msg: "Failed to load mTLS certificate: " + err.Error()}, nil
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
-	}
-	if monitor.TLSCa != "" {
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM([]byte(monitor.TLSCa)) {
-			return &CheckResult{Status: model.StatusDown, PingMS: 0, Msg: "Failed to load TLS CA"}, nil
-		}
-		tlsConfig.RootCAs = pool
-	}
-	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-	if monitor.AuthMethod == "ntlm" {
-		client.Transport = ntlmssp.Negotiator{RoundTripper: transport}
-	} else {
-		client.Transport = transport
+	client, err := httpClientForMonitor(monitor, timeout)
+	if err != nil {
+		return &CheckResult{Status: model.StatusDown, PingMS: 0, Msg: err.Error()}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	var reqBody io.Reader
-	if monitor.Body != "" {
-		reqBody = strings.NewReader(monitor.Body)
-	}
-
 	if monitor.CacheBust {
 		url = addCacheBust(url, start)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), url, reqBody)
+	req, err := requestForMonitor(ctx, monitor, method, url)
 	if err != nil {
 		return &CheckResult{
 			Status: model.StatusDown,
@@ -119,48 +66,14 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 		}, nil
 	}
 
-	req.Header.Set("User-Agent", "uptime_ng/1.0")
-	req.Header.Set("Accept", "text/html,application/json,*/*")
-
-	if monitor.AuthMethod == "basic" && monitor.BasicAuthUser != "" {
-		req.SetBasicAuth(monitor.BasicAuthUser, monitor.BasicAuthPass)
+	if err := applyMonitorAuth(ctx, client, req, monitor); err != nil {
+		return &CheckResult{
+			Status: model.StatusDown,
+			PingMS: float64(time.Since(start).Milliseconds()),
+			Msg:    "OAuth2 token request failed: " + err.Error(),
+		}, nil
 	}
-	if monitor.AuthMethod == "ntlm" && monitor.BasicAuthUser != "" {
-		user := monitor.BasicAuthUser
-		if monitor.AuthDomain != "" && !strings.Contains(user, `\`) {
-			user = monitor.AuthDomain + `\` + user
-		}
-		req.SetBasicAuth(user, monitor.BasicAuthPass)
-	}
-	if monitor.AuthMethod == "bearer" && monitor.BearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+monitor.BearerToken)
-	}
-	if monitor.AuthMethod == "oauth2-cc" {
-		token, err := fetchOAuthClientCredentialsToken(ctx, client, monitor)
-		if err != nil {
-			return &CheckResult{
-				Status: model.StatusDown,
-				PingMS: float64(time.Since(start).Milliseconds()),
-				Msg:    "OAuth2 token request failed: " + err.Error(),
-			}, nil
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	if monitor.Headers != "" {
-		headers := parseHeaders(monitor.Headers)
-		for k, v := range headers {
-			req.Header.Set(k, v)
-		}
-	}
-
-	if monitor.Body != "" && monitor.HTTPBodyEncoding == "json" {
-		req.Header.Set("Content-Type", "application/json")
-	} else if monitor.Body != "" && monitor.HTTPBodyEncoding == "form" {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	} else if monitor.Body != "" && monitor.HTTPBodyEncoding == "xml" {
-		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
-	}
+	applyMonitorHeaders(req, monitor)
 
 	resp, err := client.Do(req)
 	elapsed := float64(time.Since(start).Milliseconds())
@@ -223,6 +136,103 @@ func (h *HTTPClient) DoRequest(monitor *model.Monitor) (*CheckResult, error) {
 		result.Msg += responsePreview(bodyStr, monitor.ResponseMaxLength)
 	}
 	return result, nil
+}
+
+func httpClientForMonitor(monitor *model.Monitor, timeout time.Duration) (*http.Client, error) {
+	maxRedirects := int(monitor.MaxRedirects)
+	if maxRedirects <= 0 {
+		maxRedirects = model.DefaultHTTPMaxRedirects
+	}
+
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: monitor.IgnoreTLS,
+	}
+	if monitor.AuthMethod == "mtls" {
+		cert, err := tls.X509KeyPair([]byte(monitor.TLSCert), []byte(monitor.TLSKey))
+		if err != nil {
+			return nil, fmt.Errorf("Failed to load mTLS certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	if monitor.TLSCa != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(monitor.TLSCa)) {
+			return nil, fmt.Errorf("Failed to load TLS CA")
+		}
+		tlsConfig.RootCAs = pool
+	}
+
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+			}
+			return nil
+		},
+	}
+	if monitor.AuthMethod == "ntlm" {
+		client.Transport = ntlmssp.Negotiator{RoundTripper: transport}
+	} else {
+		client.Transport = transport
+	}
+	return client, nil
+}
+
+func requestForMonitor(ctx context.Context, monitor *model.Monitor, method string, rawURL string) (*http.Request, error) {
+	var reqBody io.Reader
+	if monitor.Body != "" {
+		reqBody = strings.NewReader(monitor.Body)
+	}
+	return http.NewRequestWithContext(ctx, strings.ToUpper(method), rawURL, reqBody)
+}
+
+func applyMonitorAuth(ctx context.Context, client *http.Client, req *http.Request, monitor *model.Monitor) error {
+	switch monitor.AuthMethod {
+	case "basic":
+		if monitor.BasicAuthUser != "" {
+			req.SetBasicAuth(monitor.BasicAuthUser, monitor.BasicAuthPass)
+		}
+	case "ntlm":
+		if monitor.BasicAuthUser != "" {
+			user := monitor.BasicAuthUser
+			if monitor.AuthDomain != "" && !strings.Contains(user, `\`) {
+				user = monitor.AuthDomain + `\` + user
+			}
+			req.SetBasicAuth(user, monitor.BasicAuthPass)
+		}
+	case "bearer":
+		if monitor.BearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+monitor.BearerToken)
+		}
+	case "oauth2-cc":
+		token, err := fetchOAuthClientCredentialsToken(ctx, client, monitor)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return nil
+}
+
+func applyMonitorHeaders(req *http.Request, monitor *model.Monitor) {
+	req.Header.Set("User-Agent", "uptime_ng/1.0")
+	req.Header.Set("Accept", "text/html,application/json,*/*")
+	for k, v := range parseHeaders(monitor.Headers) {
+		req.Header.Set(k, v)
+	}
+	if monitor.Body == "" {
+		return
+	}
+	switch monitor.HTTPBodyEncoding {
+	case "json":
+		req.Header.Set("Content-Type", "application/json")
+	case "form":
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	case "xml":
+		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	}
 }
 
 func addCacheBust(rawURL string, t time.Time) string {

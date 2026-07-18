@@ -9,6 +9,13 @@ import ExportDialog from '@/components/ExportDialog.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import api from '@/api/http'
 import type { Monitor, MonitorTreeNode } from '@/stores/monitor'
+import {
+  exportURL,
+  intervalText,
+  monitorTargetText,
+  nextExpandedIds,
+  visibleMonitorRows,
+} from './monitorList'
 
 const store = useMonitorStore()
 const router = useRouter()
@@ -20,19 +27,7 @@ const importVisible = ref(false)
 const treeRows = computed(() => store.buildMonitorTree())
 const expandedIds = ref(new Set<number>())
 const refreshTimers = new Map<number, { timer: ReturnType<typeof setInterval>, interval: number }>()
-const visibleRows = computed(() => {
-  const rows: MonitorTreeNode[] = []
-  const walk = (nodes: MonitorTreeNode[]) => {
-    nodes.forEach((node) => {
-      rows.push(node)
-      if (node.children?.length && expandedIds.value.has(node.id)) {
-        walk(node.children)
-      }
-    })
-  }
-  walk(treeRows.value)
-  return rows
-})
+const visibleRows = computed(() => visibleMonitorRows(treeRows.value, expandedIds.value))
 
 function handleCreate() {
   editingMonitor.value = null
@@ -81,19 +76,11 @@ function goDetail(id: number) {
 }
 
 function getUrl(monitor: MonitorTreeNode): string {
-  if (monitor.type === 'group') {
-    return `${monitor.children?.length || 0} 个子项`
-  }
-  if (monitor.url) return monitor.url
-  if (monitor.type === 'ping') return monitor.hostname || '-'
-  if (monitor.hostname && monitor.port) return `${monitor.hostname}:${monitor.port}`
-  if (monitor.hostname) return monitor.hostname
-  return '-'
+  return monitorTargetText(monitor)
 }
 
 function getIntervalText(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  return `${Math.floor(seconds / 60)}m`
+  return intervalText(seconds)
 }
 
 onMounted(async () => {
@@ -113,11 +100,7 @@ watch(visibleRows, () => syncVisibleRefresh())
 
 async function handleExport(ids?: number[]) {
   try {
-    let url = '/monitors/export'
-    if (ids && ids.length > 0) {
-      url += '?ids=' + JSON.stringify(ids)
-    }
-    const res = await api.get(url, { responseType: 'blob' })
+    const res = await api.get(exportURL(ids), { responseType: 'blob' })
     const blob = new Blob([res.data], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -135,21 +118,7 @@ async function handleImported() {
 }
 
 function handleExpandChange(row: MonitorTreeNode, expanded: boolean) {
-  const next = new Set(expandedIds.value)
-  if (expanded) {
-    next.add(row.id)
-  } else {
-    next.delete(row.id)
-    removeDescendantExpansion(row, next)
-  }
-  expandedIds.value = next
-}
-
-function removeDescendantExpansion(row: MonitorTreeNode, expanded: Set<number>) {
-  row.children?.forEach((child) => {
-    expanded.delete(child.id)
-    removeDescendantExpansion(child, expanded)
-  })
+  expandedIds.value = nextExpandedIds(row, expanded, expandedIds.value)
 }
 
 function syncVisibleRefresh() {

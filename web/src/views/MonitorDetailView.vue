@@ -11,6 +11,16 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import { wsClient } from '@/api/ws'
 import type { Heartbeat, Incident, UptimeDataPoint, UptimeSummary } from '@/api/types'
 import type { Monitor } from '@/stores/monitor'
+import {
+  buildPingChartOption,
+  buildUptimeChartOption,
+  heartbeatColor,
+  heartbeatTitle,
+  incidentDuration,
+  incidentStatusText,
+  incidentStatusType,
+  uptimePercent,
+} from './monitorDetail'
 
 use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -51,10 +61,6 @@ const uptimeChartData = ref<UptimeDataPoint[]>([])
 const loading = ref(false)
 const uptimeSummary = ref<UptimeSummary>({ uptime_24h: 0, uptime_30d: 0, uptime_1y: 0 })
 
-function uptimePercent(v: number): string {
-  return (v * 100).toFixed(2) + '%'
-}
-
 const beatsContainer = ref<{ $el?: HTMLElement } | null>(null)
 const containerWidth = ref(0)
 const allBeats = ref<Heartbeat[]>([])
@@ -66,105 +72,8 @@ async function loadBeats() {
   const res = await api.get(`/monitors/${id}/beats`, { params: { period: 86400 } })
   allBeats.value = res.data || []
 }
-const pingChartOption = computed(() => ({
-  color: ['#E6A23C', '#409EFF', '#67C23A'],
-  tooltip: { trigger: 'axis' },
-  legend: { data: ['平均响应', '最大响应', '最小响应'], top: 0, right: 0, icon: 'roundRect', itemWidth: 20 },
-  grid: { left: 50, right: 20, top: 40, bottom: 30 },
-  xAxis: {
-    type: 'time',
-    minInterval: 3600 * 1000,
-    axisLabel: { formatter: '{HH}:00' },
-  },
-  yAxis: {
-    type: 'value',
-    name: 'ms',
-    nameLocation: 'middle',
-    nameGap: 40,
-  },
-  series: [
-    {
-      name: '最大响应',
-      type: 'line',
-      data: pingChartData.value
-        .filter((d) => d.up > 0)
-        .map((d) => [new Date(d.timestamp * 1000), d.max_ping !== undefined ? Number(d.max_ping) : 0]),
-      smooth: true,
-      symbol: 'circle',
-    },
-    {
-      name: '平均响应',
-      type: 'line',
-      data: pingChartData.value
-        .filter((d) => d.up > 0)
-        .map((d) => [new Date(d.timestamp * 1000), d.avg_ping !== undefined ? Number(d.avg_ping) : 0]),
-      smooth: true,
-      areaStyle: { opacity: 0.1 },
-      symbol: 'circle',
-    },
-    {
-      name: '最小响应',
-      type: 'line',
-      data: pingChartData.value
-        .filter((d) => d.up > 0)
-        .map((d) => [new Date(d.timestamp * 1000), d.min_ping !== undefined ? Number(d.min_ping) : 0]),
-      smooth: true,
-      symbol: 'circle',
-    },
-  ],
-}))
-
-const uptimeChartOption = computed(() => ({
-  tooltip: {
-    trigger: 'axis',
-    formatter: (params: any) => {
-      const p = params[0]
-      if (!p) return ''
-      return `${p.name}<br/>可用率: ${(p.value * 100).toFixed(2)}%`
-    },
-  },
-  grid: { left: 55, right: 20, top: 30, bottom: 50 },
-  xAxis: {
-    type: 'category',
-    data: uptimeChartData.value.map((d: any) => {
-      const date = new Date(d.timestamp * 1000)
-      return (date.getMonth() + 1) + '月' + date.getDate() + '日'
-    }),
-    axisLabel: {
-      margin: 10,
-    },
-  },
-  yAxis: {
-    type: 'value',
-    min: 0,
-    max: 1,
-    axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' },
-  },
-  series: [
-    {
-      name: '可用率',
-      type: 'bar',
-      data: uptimeChartData.value.map((d: any) => d.uptime !== undefined ? Number(d.uptime) : 0),
-      itemStyle: {
-        color: (params: { value: number }) => params.value > 0.99 ? '#67C23A' : params.value > 0.95 ? '#409EFF' : params.value > 0.8 ? '#E6A23C' : '#F56C6C',
-      },
-    },
-  ],
-}))
-
-function statusText(status: number): string {
-  switch (status) {
-    case 1: return 'UP'
-    case 0: return 'DOWN'
-    case 2: return 'PENDING'
-    default: return 'UNKNOWN'
-  }
-}
-
-function formatPing(ping: number | null): string {
-  if (ping == null) return '-'
-  return ping.toFixed(1) + ' ms'
-}
+const pingChartOption = computed(() => buildPingChartOption(pingChartData.value))
+const uptimeChartOption = computed(() => buildUptimeChartOption(uptimeChartData.value))
 
 onMounted(async () => {
   loading.value = true
@@ -313,11 +222,11 @@ onMounted(async () => {
             v-for="(beat, i) in heartbeatList"
             :key="beat.id ?? i"
             :class="['beat-cell', { 'beat-pop': i === heartbeatList.length - 1 }]"
-            :title="`${new Date(beat.time).toLocaleString('zh-CN')} · ${statusText(beat.status)} · ${formatPing(beat.ping_ms)}`"
+            :title="heartbeatTitle(beat)"
             :style="{
               width: '12px', height: '18px', borderRadius: '2px',
               flexShrink: 0, cursor: 'pointer',
-              backgroundColor: beat.status === 1 ? '#67C23A' : '#F56C6C',
+              backgroundColor: heartbeatColor(beat.status),
             }"
           />
         </TransitionGroup>
@@ -346,13 +255,13 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="持续" width="100">
             <template #default="{ row }">
-              {{ row.duration_seconds ? Math.floor(row.duration_seconds / 60) + 'm' : '-' }}
+              {{ incidentDuration(row.duration_seconds) }}
             </template>
           </el-table-column>
           <el-table-column label="状态" width="80">
             <template #default="{ row }">
-              <el-tag :type="row.status === 0 ? 'danger' : 'success'" size="small">
-                {{ row.status === 0 ? 'DOWN' : '已恢复' }}
+              <el-tag :type="incidentStatusType(row.status)" size="small">
+                {{ incidentStatusText(row.status) }}
               </el-tag>
             </template>
           </el-table-column>

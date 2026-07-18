@@ -45,10 +45,7 @@ func (u *UptimeCalculator) Init() error {
 	u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
 		Order("timestamp").Find(&minutelyBeans)
 	for _, b := range minutelyBeans {
-		u.MinutelyData[b.Timestamp] = &AggregateBucket{
-			Up: b.Up, Down: b.Down,
-			AvgPing: b.AvgPing, MinPing: b.MinPing, MaxPing: b.MaxPing,
-		}
+		u.MinutelyData[b.Timestamp] = bucketFromStats(b.Up, b.Down, b.AvgPing, b.MinPing, b.MaxPing)
 	}
 
 	var hourlyBeans []model.StatHourly
@@ -56,10 +53,7 @@ func (u *UptimeCalculator) Init() error {
 	u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
 		Order("timestamp").Find(&hourlyBeans)
 	for _, b := range hourlyBeans {
-		u.HourlyData[b.Timestamp] = &AggregateBucket{
-			Up: b.Up, Down: b.Down,
-			AvgPing: b.AvgPing, MinPing: b.MinPing, MaxPing: b.MaxPing,
-		}
+		u.HourlyData[b.Timestamp] = bucketFromStats(b.Up, b.Down, b.AvgPing, b.MinPing, b.MaxPing)
 	}
 
 	var dailyBeans []model.StatDaily
@@ -67,22 +61,13 @@ func (u *UptimeCalculator) Init() error {
 	u.DB.Where("monitor_id = ? AND timestamp > ?", u.MonitorID, cutoff.Unix()).
 		Order("timestamp").Find(&dailyBeans)
 	for _, b := range dailyBeans {
-		u.DailyData[b.Timestamp] = &AggregateBucket{
-			Up: b.Up, Down: b.Down,
-			AvgPing: b.AvgPing, MinPing: b.MinPing, MaxPing: b.MaxPing,
-		}
+		u.DailyData[b.Timestamp] = bucketFromStats(b.Up, b.Down, b.AvgPing, b.MinPing, b.MaxPing)
 	}
 
 	return nil
 }
 
 func (u *UptimeCalculator) Update(status uint16, pingMS *float64, date time.Time) {
-	flatStatus := model.FlatStatus(status)
-	ping := 0.0
-	if pingMS != nil {
-		ping = *pingMS
-	}
-
 	minutelyKey := u.minutelyKey(date)
 	hourlyKey := u.hourlyKey(date)
 	dailyKey := u.dailyKey(date)
@@ -91,45 +76,13 @@ func (u *UptimeCalculator) Update(status uint16, pingMS *float64, date time.Time
 	hourly := u.getOrCreate(u.HourlyData, hourlyKey)
 	daily := u.getOrCreate(u.DailyData, dailyKey)
 
-	if status == model.StatusMaintenance {
-		minutely.Maintenance++
-		hourly.Maintenance++
-		daily.Maintenance++
-	} else if flatStatus == model.StatusUP {
-		minutely.Up++
-		hourly.Up++
-		daily.Up++
+	applyBucketUpdate(minutely, status, pingMS)
+	applyBucketUpdate(hourly, status, pingMS)
+	applyBucketUpdate(daily, status, pingMS)
 
-		if ping > 0 {
-			u.updatePingStats(minutely, ping)
-			u.updatePingStats(hourly, ping)
-			u.updatePingStats(daily, ping)
-		}
-	} else {
-		minutely.Down++
-		hourly.Down++
-		daily.Down++
-	}
-
-	u.persistBucket(u.MinutelyData, minutelyKey, minutely, "stat_minutely")
-	u.persistBucket(u.HourlyData, hourlyKey, hourly, "stat_hourly")
-	u.persistBucket(u.DailyData, dailyKey, daily, "stat_daily")
-}
-
-func (u *UptimeCalculator) updatePingStats(bucket *AggregateBucket, ping float64) {
-	if bucket.Up == 1 {
-		bucket.AvgPing = ping
-		bucket.MinPing = ping
-		bucket.MaxPing = ping
-	} else {
-		bucket.AvgPing = (bucket.AvgPing*float64(bucket.Up-1) + ping) / float64(bucket.Up)
-		if ping < bucket.MinPing {
-			bucket.MinPing = ping
-		}
-		if ping > bucket.MaxPing {
-			bucket.MaxPing = ping
-		}
-	}
+	u.persistMinutelyBucket(minutelyKey, minutely)
+	u.persistHourlyBucket(hourlyKey, hourly)
+	u.persistDailyBucket(dailyKey, daily)
 }
 
 func (u *UptimeCalculator) getOrCreate(data map[int64]*AggregateBucket, key int64) *AggregateBucket {
@@ -141,48 +94,47 @@ func (u *UptimeCalculator) getOrCreate(data map[int64]*AggregateBucket, key int6
 	return bucket
 }
 
-func (u *UptimeCalculator) persistBucket(data map[int64]*AggregateBucket, key int64, bucket *AggregateBucket, table string) {
-	switch table {
-	case "stat_minutely":
-		u.DB.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "monitor_id"}, {Name: "timestamp"}},
-			DoUpdates: clause.AssignmentColumns([]string{"up", "down", "avg_ping", "min_ping", "max_ping"}),
-		}).Create(&model.StatMinutely{
-			MonitorID: u.MonitorID,
-			Timestamp: key,
-			Up:        bucket.Up,
-			Down:      bucket.Down,
-			AvgPing:   bucket.AvgPing,
-			MinPing:   bucket.MinPing,
-			MaxPing:   bucket.MaxPing,
-		})
-	case "stat_hourly":
-		u.DB.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "monitor_id"}, {Name: "timestamp"}},
-			DoUpdates: clause.AssignmentColumns([]string{"up", "down", "avg_ping", "min_ping", "max_ping"}),
-		}).Create(&model.StatHourly{
-			MonitorID: u.MonitorID,
-			Timestamp: key,
-			Up:        bucket.Up,
-			Down:      bucket.Down,
-			AvgPing:   bucket.AvgPing,
-			MinPing:   bucket.MinPing,
-			MaxPing:   bucket.MaxPing,
-		})
-	case "stat_daily":
-		u.DB.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "monitor_id"}, {Name: "timestamp"}},
-			DoUpdates: clause.AssignmentColumns([]string{"up", "down", "avg_ping", "min_ping", "max_ping"}),
-		}).Create(&model.StatDaily{
-			MonitorID: u.MonitorID,
-			Timestamp: key,
-			Up:        bucket.Up,
-			Down:      bucket.Down,
-			AvgPing:   bucket.AvgPing,
-			MinPing:   bucket.MinPing,
-			MaxPing:   bucket.MaxPing,
-		})
+func statUpsert() clause.OnConflict {
+	return clause.OnConflict{
+		Columns:   []clause.Column{{Name: "monitor_id"}, {Name: "timestamp"}},
+		DoUpdates: clause.AssignmentColumns([]string{"up", "down", "avg_ping", "min_ping", "max_ping"}),
 	}
+}
+
+func (u *UptimeCalculator) persistMinutelyBucket(key int64, bucket *AggregateBucket) {
+	u.DB.Clauses(statUpsert()).Create(&model.StatMinutely{
+		MonitorID: u.MonitorID,
+		Timestamp: key,
+		Up:        bucket.Up,
+		Down:      bucket.Down,
+		AvgPing:   bucket.AvgPing,
+		MinPing:   bucket.MinPing,
+		MaxPing:   bucket.MaxPing,
+	})
+}
+
+func (u *UptimeCalculator) persistHourlyBucket(key int64, bucket *AggregateBucket) {
+	u.DB.Clauses(statUpsert()).Create(&model.StatHourly{
+		MonitorID: u.MonitorID,
+		Timestamp: key,
+		Up:        bucket.Up,
+		Down:      bucket.Down,
+		AvgPing:   bucket.AvgPing,
+		MinPing:   bucket.MinPing,
+		MaxPing:   bucket.MaxPing,
+	})
+}
+
+func (u *UptimeCalculator) persistDailyBucket(key int64, bucket *AggregateBucket) {
+	u.DB.Clauses(statUpsert()).Create(&model.StatDaily{
+		MonitorID: u.MonitorID,
+		Timestamp: key,
+		Up:        bucket.Up,
+		Down:      bucket.Down,
+		AvgPing:   bucket.AvgPing,
+		MinPing:   bucket.MinPing,
+		MaxPing:   bucket.MaxPing,
+	})
 }
 
 func (u *UptimeCalculator) minutelyKey(date time.Time) int64 {
@@ -241,20 +193,7 @@ func (u *UptimeCalculator) GetDataPoints(granularity string, num int) []DataPoin
 
 	for key := endKey; key >= startKey; key -= step {
 		if bucket, ok := data[key]; ok {
-			total := bucket.Up + bucket.Down
-			var uptime float64 = 1.0
-			if total > 0 {
-				uptime = float64(bucket.Up) / float64(total)
-			}
-			points = append([]DataPoint{{
-				Timestamp: key,
-				Uptime:    uptime,
-				AvgPing:   bucket.AvgPing,
-				MinPing:   bucket.MinPing,
-				MaxPing:   bucket.MaxPing,
-				Up:        bucket.Up,
-				Down:      bucket.Down,
-			}}, points...)
+			points = append([]DataPoint{dataPointFromBucket(key, bucket)}, points...)
 		}
 	}
 
@@ -293,11 +232,7 @@ func (u *UptimeCalculator) getUptimeByType(typ string, num int) float64 {
 	}
 
 	_ = num
-	total := totalUP + totalDown
-	if total == 0 {
-		return 1.0
-	}
-	return float64(totalUP) / float64(total)
+	return uptimeFromCounts(totalUP, totalDown)
 }
 
 func (u *UptimeCalculator) CleanupOldData() {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import api from '@/api/http'
+import { apiErrorMessage, isDialogCancel } from '@/api/errors'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 interface User {
@@ -30,7 +31,7 @@ async function toggleActive(user: User) {
     await api.patch(`/auth/users/${user.id}`, { active: !user.active })
     await fetchUsers()
   } catch (e: unknown) {
-    ElMessage.error(errorMessage(e, '操作失败'))
+    ElMessage.error(apiErrorMessage(e, '操作失败'))
   }
 }
 
@@ -40,7 +41,7 @@ async function toggleRole(user: User) {
     await api.patch(`/auth/users/${user.id}`, { role: newRole })
     await fetchUsers()
   } catch (e: unknown) {
-    ElMessage.error(errorMessage(e, '操作失败'))
+    ElMessage.error(apiErrorMessage(e, '操作失败'))
   }
 }
 
@@ -56,21 +57,9 @@ async function resetPassword(user: User) {
     await api.patch(`/auth/users/${user.id}`, { password: result.value })
     ElMessage.success('密码已重置')
   } catch (e: unknown) {
-    if (isCancel(e)) return
-    ElMessage.error(errorMessage(e, '重置失败'))
+    if (isDialogCancel(e)) return
+    ElMessage.error(apiErrorMessage(e, '重置失败'))
   }
-}
-
-function errorMessage(e: unknown, fallback: string): string {
-  if (typeof e === 'object' && e !== null && 'response' in e) {
-    const response = (e as { response?: { data?: { error?: string } } }).response
-    return response?.data?.error || fallback
-  }
-  return fallback
-}
-
-function isCancel(e: unknown): boolean {
-  return e === 'cancel' || e === 'close'
 }
 
 onMounted(fetchUsers)

@@ -83,6 +83,6 @@ func Setup(r *gin.Engine, db *gorm.DB, hub *handler.WSHub, scheduler handler.Mon
 			c.File("./dist/index.html")
 			return
 		}
-		c.JSON(404, gin.H{"error": "not found"})
+		c.JSON(404, gin.H{"error": "not found", "code": "not_found"})
 	})
 }
