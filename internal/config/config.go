@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 
@@ -149,31 +150,8 @@ func Load() error {
 }
 
 func (d *DatabaseConfig) DSN() string {
-	return "host=" + d.Host +
-		" port=" + intToStr(d.Port) +
-		" user=" + d.User +
-		" password=" + d.Password +
-		" dbname=" + d.DBName +
-		" sslmode=" + d.SSLMode +
-		" TimeZone=Asia/Shanghai"
-}
-
-func intToStr(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	s := ""
-	neg := false
-	if i < 0 {
-		neg = true
-		i = -i
-	}
-	for i > 0 {
-		s = string(rune('0'+i%10)) + s
-		i /= 10
-	}
-	if neg {
-		s = "-" + s
-	}
-	return s
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=Asia/Shanghai",
+		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode,
+	)
 }

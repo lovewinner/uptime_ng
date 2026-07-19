@@ -20,6 +20,18 @@ type MonitorStatusSnapshot struct {
 	Active    bool    `json:"active"`
 }
 
+func pendingStatusSnapshot(monitor model.Monitor) MonitorStatusSnapshot {
+	return MonitorStatusSnapshot{
+		ID:        monitor.ID,
+		Name:      monitor.Name,
+		Type:      monitor.Type,
+		GroupID:   monitor.GroupID,
+		Status:    model.StatusPending,
+		Uptime24H: 1.0,
+		Active:    monitor.Active,
+	}
+}
+
 func ComputeMonitorStatus(db *gorm.DB, userID uint, monitorID uint) (MonitorStatusSnapshot, error) {
 	var monitor model.Monitor
 	if err := db.Where("id = ? AND user_id = ?", monitorID, userID).First(&monitor).Error; err != nil {
@@ -93,17 +105,16 @@ func computeGroupStatus(db *gorm.DB, group model.Monitor, visiting map[uint]bool
 		return model.StatusPending, 1.0, nil
 	}
 
-	accumulator := groupStatusAccumulator{}
+	acc := groupStatusAccumulator{}
 	for _, child := range children {
 		childStatus, err := computeMonitorStatus(db, child, visiting)
 		if err != nil {
-			accumulator.addPending()
+			acc.addPending()
 			continue
 		}
-		accumulator.addChild(childStatus)
+		acc.addChild(childStatus)
 	}
-	status, uptime := accumulator.result()
-	return status, uptime, nil
+	status, uptime := acc.result(); return status, uptime, nil
 }
 
 func monitorUptime24H(db *gorm.DB, monitorID uint) (float64, error) {
@@ -130,4 +141,40 @@ func GroupStatusMessage(status uint16) string {
 	default:
 		return "group PENDING: child monitors are pending or group is empty"
 	}
+}
+
+// --- group status accumulator (moved from group_status.go) ---
+
+type groupStatusAccumulator struct {
+	hasDown    bool
+	hasPending bool
+	uptimeSum  float64
+	uptimeNum  int
+}
+
+func (a *groupStatusAccumulator) addChild(child MonitorStatusSnapshot) {
+	if child.Status == model.StatusDown {
+		a.hasDown = true
+	} else if child.Status != model.StatusUP {
+		a.hasPending = true
+	}
+	a.uptimeSum += child.Uptime24H
+	a.uptimeNum++
+}
+
+func (a *groupStatusAccumulator) addPending() {
+	a.hasPending = true
+}
+
+func (a groupStatusAccumulator) result() (uint16, float64) {
+	if a.uptimeNum == 0 {
+		return model.StatusPending, 1.0
+	}
+	status := model.StatusUP
+	if a.hasDown {
+		status = model.StatusDown
+	} else if a.hasPending {
+		status = model.StatusPending
+	}
+	return status, a.uptimeSum / float64(a.uptimeNum)
 }

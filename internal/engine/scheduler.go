@@ -365,7 +365,7 @@ func (r *MonitorRunner) sendNotification(isFirstBeat bool, prevStatus uint16, be
 	if err := dispatch.Send(r.Monitor, beat, isFirstBeat, prevStatus); err != nil {
 		log.Printf("Failed to dispatch notification for monitor %s: %v", r.Monitor.Name, err)
 	}
-	if err := dispatch.markIncident(r.DB, r.Monitor.ID, r.Monitor.Name, prevStatus, beat.Status, beat.Msg); err != nil {
+	if err := markIncident(r.DB, r.Monitor.ID, r.Monitor.Name, prevStatus, beat.Status, beat.Msg); err != nil {
 		log.Printf("Failed to update incident for monitor %s: %v", r.Monitor.Name, err)
 	}
 }

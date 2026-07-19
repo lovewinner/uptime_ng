@@ -51,19 +51,17 @@ func TestMarkIncidentReturnsWriteErrors(t *testing.T) {
 		t.Fatalf("drop incidents: %v", err)
 	}
 
-	dispatch := NewNotifyDispatch(db)
-	if err := dispatch.markIncident(db, 1, "site", model.StatusUP, model.StatusDown, "down"); err == nil {
+	if err := markIncident(db, 1, "site", model.StatusUP, model.StatusDown, "down"); err == nil {
 		t.Fatal("expected incident write error")
 	}
 }
 
 func TestMarkIncidentCreatesAndResolvesIncident(t *testing.T) {
 	db := schedulerTestDB(t)
-	dispatch := NewNotifyDispatch(db)
-	if err := dispatch.markIncident(db, 1, "site", model.StatusUP, model.StatusDown, "down"); err != nil {
+	if err := markIncident(db, 1, "site", model.StatusUP, model.StatusDown, "down"); err != nil {
 		t.Fatalf("create incident: %v", err)
 	}
-	if err := dispatch.markIncident(db, 1, "site", model.StatusDown, model.StatusUP, "up"); err != nil {
+	if err := markIncident(db, 1, "site", model.StatusDown, model.StatusUP, "up"); err != nil {
 		t.Fatalf("resolve incident: %v", err)
 	}
 
