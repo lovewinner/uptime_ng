@@ -12,7 +12,7 @@ func monitorResponse(db *gorm.DB, monitor model.Monitor) (gin.H, error) {
 	if err != nil {
 		return nil, err
 	}
-	notificationIDs, err := monitorNotificationIDs(db, monitor.ID)
+	notificationIDs, err := userMonitorNotificationIDs(db, monitor.UserID, monitor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -25,24 +25,32 @@ func monitorResponse(db *gorm.DB, monitor model.Monitor) (gin.H, error) {
 
 func monitorTags(db *gorm.DB, monitorID uint) ([]model.Tag, error) {
 	var tags []model.Tag
-	if err := db.Raw(`
-		SELECT t.* FROM tags t
-		JOIN monitor_tags mt ON mt.tag_id = t.id
-		WHERE mt.monitor_id = ?
-	`, monitorID).Scan(&tags).Error; err != nil {
-		return nil, err
-	}
-	return tags, nil
+	err := db.Model(&model.Tag{}).
+		Select("tags.*").
+		Joins("JOIN monitor_tags mt ON mt.tag_id = tags.id").
+		Where("mt.monitor_id = ?", monitorID).
+		Find(&tags).Error
+	return tags, err
 }
 
-func monitorNotificationIDs(db *gorm.DB, monitorID uint) ([]uint, error) {
-	var notifs []model.MonitorNotification
-	if err := db.Where("monitor_id = ?", monitorID).Find(&notifs).Error; err != nil {
+func userMonitorNotifications(db *gorm.DB, userID uint, monitorID uint) ([]model.Notification, error) {
+	var notifications []model.Notification
+	err := db.Model(&model.Notification{}).
+		Select("notifications.*").
+		Joins("JOIN monitor_notifications mn ON mn.notification_id = notifications.id").
+		Where("notifications.user_id = ? AND mn.monitor_id = ?", userID, monitorID).
+		Find(&notifications).Error
+	return notifications, err
+}
+
+func userMonitorNotificationIDs(db *gorm.DB, userID uint, monitorID uint) ([]uint, error) {
+	var ids []uint
+	if err := db.Model(&model.Notification{}).
+		Select("notifications.id").
+		Joins("JOIN monitor_notifications mn ON mn.notification_id = notifications.id").
+		Where("notifications.user_id = ? AND mn.monitor_id = ?", userID, monitorID).
+		Pluck("notifications.id", &ids).Error; err != nil {
 		return nil, err
-	}
-	ids := make([]uint, len(notifs))
-	for i, notif := range notifs {
-		ids[i] = notif.NotificationID
 	}
 	return ids, nil
 }

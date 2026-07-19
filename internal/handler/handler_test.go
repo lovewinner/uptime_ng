@@ -674,8 +674,10 @@ func TestImportCopyCountsOnceAndRefreshesOverwriteLinks(t *testing.T) {
 		t.Fatalf("overwrite code=%d body=%s", overwriteResp.Code, overwriteResp.Body.String())
 	}
 
-	var tags []model.Tag
-	db.Raw("SELECT t.* FROM tags t JOIN monitor_tags mt ON mt.tag_id = t.id WHERE mt.monitor_id = ?", monitor.ID).Scan(&tags)
+	tags, err := monitorTags(db, monitor.ID)
+	if err != nil {
+		t.Fatalf("monitor tags: %v", err)
+	}
 	if len(tags) != 1 || tags[0].Name != "new" {
 		t.Fatalf("tags=%+v", tags)
 	}
@@ -721,6 +723,39 @@ func TestNotificationTestValidatesConfig(t *testing.T) {
 	resp := authedRequest(t, r, http.MethodPost, "/api/notifications/1/test", nil, token)
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("notification test code=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestNotificationDeleteRemovesMonitorAssociations(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+	notif := model.Notification{UserID: user.ID, Name: "ops", Type: model.NotificationTypeFeishu, Config: `{}`, Active: true}
+	monitor := model.Monitor{UserID: user.ID, Name: "site", Type: model.MonitorTypeHTTP, URL: "https://example.com", Active: true}
+	if err := db.Create(&notif).Error; err != nil {
+		t.Fatalf("create notification: %v", err)
+	}
+	if err := db.Create(&monitor).Error; err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+	if err := db.Create(&model.MonitorNotification{MonitorID: monitor.ID, NotificationID: notif.ID}).Error; err != nil {
+		t.Fatalf("create monitor notification: %v", err)
+	}
+
+	resp := authedRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/notifications/%d", notif.ID), nil, token)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var notificationLinks int64
+	if err := db.Model(&model.MonitorNotification{}).Where("notification_id = ?", notif.ID).Count(&notificationLinks).Error; err != nil {
+		t.Fatalf("count monitor notifications: %v", err)
+	}
+	if notificationLinks != 0 {
+		t.Fatalf("notification links=%d want 0", notificationLinks)
+	}
+	if err := db.First(&model.Notification{}, notif.ID).Error; !isRecordNotFound(err) {
+		t.Fatalf("notification lookup error=%v want record not found", err)
 	}
 }
 
@@ -781,19 +816,29 @@ func TestImportExportUserIsolation(t *testing.T) {
 	otherMonitor := model.Monitor{UserID: other.ID, Name: "other", Type: "http", URL: "https://other", Active: true, AcceptedStatusCodes: `["200-299"]`}
 	db.Create(&ownMonitor)
 	db.Create(&otherMonitor)
-	otherNotif := model.Notification{UserID: other.ID, Name: "ops", Type: model.NotificationTypeEmail, Config: `{"to":"other@example.com"}`, Active: true}
+	otherNotif := model.Notification{UserID: other.ID, Name: "secret", Type: model.NotificationTypeEmail, Config: `{"to":"other@example.com"}`, Active: true}
 	ownNotif := model.Notification{UserID: user.ID, Name: "ops", Type: model.NotificationTypeEmail, Config: `{"to":"own@example.com"}`, Active: true}
 	db.Create(&otherNotif)
 	db.Create(&ownNotif)
+	db.Create(&model.MonitorNotification{MonitorID: ownMonitor.ID, NotificationID: ownNotif.ID})
+	db.Create(&model.MonitorNotification{MonitorID: ownMonitor.ID, NotificationID: otherNotif.ID})
 
 	exportResp := authedRequest(t, r, http.MethodGet, "/api/monitors/export", nil, token)
 	if exportResp.Code != http.StatusOK {
 		t.Fatalf("export code=%d body=%s", exportResp.Code, exportResp.Body.String())
 	}
 	var file ExportFile
-	json.Unmarshal(exportResp.Body.Bytes(), &file)
+	if err := json.Unmarshal(exportResp.Body.Bytes(), &file); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
 	if len(file.Monitors) != 1 || file.Monitors[0].Name != "own" {
 		t.Fatalf("exported monitors=%+v", file.Monitors)
+	}
+	if len(file.Monitors[0].NotificationNames) != 1 || file.Monitors[0].NotificationNames[0] != "ops" {
+		t.Fatalf("exported monitor notifications=%+v", file.Monitors[0].NotificationNames)
+	}
+	if len(file.Notifications) != 1 || file.Notifications[0].Name != "ops" || strings.Contains(file.Notifications[0].Config, "other@example.com") {
+		t.Fatalf("exported notifications=%+v", file.Notifications)
 	}
 
 	importResp := authedRequest(t, r, http.MethodPost, "/api/monitors/import", ImportRequest{
@@ -821,6 +866,24 @@ func TestImportExportUserIsolation(t *testing.T) {
 	}
 	if link.NotificationID != ownNotif.ID {
 		t.Fatalf("linked notification=%d want owned=%d", link.NotificationID, ownNotif.ID)
+	}
+}
+
+func TestExportMonitorsRejectsInvalidIDs(t *testing.T) {
+	db := testDB(t)
+	r, user := setupRouter(t, db, &fakeScheduler{})
+	token := authToken(t, user)
+
+	resp := authedRequest(t, r, http.MethodGet, "/api/monitors/export?ids=bad", nil, token)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["code"] != "invalid_export_ids" {
+		t.Fatalf("body=%v", body)
 	}
 }
 

@@ -58,3 +58,41 @@ func TestBuildImportPreviewSummarizesConflictsTagsAndMaskedNotifications(t *test
 		t.Fatal("summary missing")
 	}
 }
+
+func TestParseExportMonitorIDs(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    []uint
+		wantErr bool
+	}{
+		{name: "valid", input: "[1,2]", want: []uint{1, 2}},
+		{name: "empty", input: "[]", want: []uint{}},
+		{name: "not json", input: "bad", wantErr: true},
+		{name: "object", input: `{"id":1}`, wantErr: true},
+		{name: "zero", input: "[0]", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, validationErr := parseExportMonitorIDs(tt.input)
+			if tt.wantErr {
+				if validationErr == nil || validationErr.code != "invalid_export_ids" {
+					t.Fatalf("validationErr=%+v", validationErr)
+				}
+				return
+			}
+			if validationErr != nil {
+				t.Fatalf("validationErr=%+v", validationErr)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("ids=%v want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("ids=%v want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}

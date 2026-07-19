@@ -38,6 +38,33 @@ func TestMonitorResponseIncludesAssociations(t *testing.T) {
 	}
 }
 
+func TestMonitorResponseIgnoresCrossUserNotificationLinks(t *testing.T) {
+	db := testDB(t)
+	monitor := model.Monitor{UserID: 1, Name: "site", Type: model.MonitorTypeHTTP}
+	if err := db.Create(&monitor).Error; err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+	owned := model.Notification{UserID: 1, Name: "owned", Type: model.NotificationTypeFeishu, Config: `{}`, Active: true}
+	other := model.Notification{UserID: 2, Name: "other", Type: model.NotificationTypeFeishu, Config: `{}`, Active: true}
+	if err := db.Create(&owned).Error; err != nil {
+		t.Fatalf("create owned notification: %v", err)
+	}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatalf("create other notification: %v", err)
+	}
+	db.Create(&model.MonitorNotification{MonitorID: monitor.ID, NotificationID: owned.ID})
+	db.Create(&model.MonitorNotification{MonitorID: monitor.ID, NotificationID: other.ID})
+
+	resp, err := monitorResponse(db, monitor)
+	if err != nil {
+		t.Fatalf("monitor response: %v", err)
+	}
+	ids, ok := resp["notification_ids"].([]uint)
+	if !ok || len(ids) != 1 || ids[0] != owned.ID {
+		t.Fatalf("notification_ids=%+v want only owned=%d", resp["notification_ids"], owned.ID)
+	}
+}
+
 func TestMonitorResponseReturnsAssociationErrors(t *testing.T) {
 	db := testDB(t)
 	monitor := model.Monitor{UserID: 1, Name: "site", Type: model.MonitorTypeHTTP}

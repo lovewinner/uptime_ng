@@ -122,10 +122,10 @@ func (h *NotificationHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err := runTransaction(h.DB, func(tx *gorm.DB) error {
-		if err := tx.Delete(&notif).Error; err != nil {
+		if err := tx.Where("notification_id = ?", id).Delete(&model.MonitorNotification{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("notification_id = ?", id).Delete(&model.MonitorNotification{}).Error
+		return tx.Delete(&notif).Error
 	}); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "notification_delete_failed", err.Error())
 		return

@@ -23,24 +23,9 @@ func NewNotifyDispatch(db *gorm.DB) *NotifyDispatch {
 func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat, isFirstBeat bool, prevStatus uint16) error {
 	isUp := heartbeat.Status == model.StatusUP
 
-	var mnList []model.MonitorNotification
-	if err := d.DB.Where("monitor_id = ?", monitor.ID).Find(&mnList).Error; err != nil {
+	notifications, err := linkedNotificationsForMonitor(d.DB, monitor.UserID, monitor.ID)
+	if err != nil {
 		return err
-	}
-
-	notifications := make([]model.Notification, 0, len(mnList))
-	for _, mn := range mnList {
-		var notif model.Notification
-		if err := d.DB.First(&notif, mn.NotificationID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				continue
-			}
-			return err
-		}
-		if notif.UserID != monitor.UserID {
-			continue
-		}
-		notifications = append(notifications, notif)
 	}
 
 	for _, notif := range activeNotifications(notifications) {
@@ -61,6 +46,16 @@ func (d *NotifyDispatch) Send(monitor *model.Monitor, heartbeat model.Heartbeat,
 		}
 	}
 	return nil
+}
+
+func linkedNotificationsForMonitor(db *gorm.DB, userID uint, monitorID uint) ([]model.Notification, error) {
+	var notifications []model.Notification
+	err := db.Model(&model.Notification{}).
+		Select("notifications.*").
+		Joins("JOIN monitor_notifications mn ON mn.notification_id = notifications.id").
+		Where("notifications.user_id = ? AND mn.monitor_id = ?", userID, monitorID).
+		Find(&notifications).Error
+	return notifications, err
 }
 
 func (d *NotifyDispatch) sendFeishu(notif model.Notification, monitor *model.Monitor, isUp bool, msg string) {

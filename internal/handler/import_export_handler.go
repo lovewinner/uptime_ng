@@ -128,8 +128,11 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 	var monitors []model.Monitor
 
 	if idsParam != "" {
-		var ids []int
-		_ = json.Unmarshal([]byte(idsParam), &ids)
+		ids, validationErr := parseExportMonitorIDs(idsParam)
+		if validationErr != nil {
+			badRequest(c, validationErr.code, validationErr.message)
+			return
+		}
 		if len(ids) > 0 {
 			if err := h.DB.Where("user_id = ? AND id IN ?", userID, ids).Find(&monitors).Error; err != nil {
 				errorResponse(c, http.StatusInternalServerError, "export_query_failed", err.Error())
@@ -148,34 +151,22 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 	notifNameSet := make(map[string]*model.Notification)
 
 	for i, m := range monitors {
-		var tags []model.Tag
-		if err := h.DB.Raw(`
-			SELECT t.* FROM tags t
-			JOIN monitor_tags mt ON mt.tag_id = t.id
-			WHERE mt.monitor_id = ?
-		`, m.ID).Scan(&tags).Error; err != nil {
+		tags, err := monitorTags(h.DB, m.ID)
+		if err != nil {
 			errorResponse(c, http.StatusInternalServerError, "export_tags_failed", err.Error())
 			return
 		}
 
-		var notifs []model.MonitorNotification
-		if err := h.DB.Where("monitor_id = ?", m.ID).Find(&notifs).Error; err != nil {
+		linkedNotifications, err := userMonitorNotifications(h.DB, userID, m.ID)
+		if err != nil {
 			errorResponse(c, http.StatusInternalServerError, "export_notifications_failed", err.Error())
 			return
 		}
-		notifNames := make([]string, 0, len(notifs))
-		for _, mn := range notifs {
-			var n model.Notification
-			err := h.DB.Where("id = ?", mn.NotificationID).First(&n).Error
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				continue
-			}
-			if err != nil {
-				errorResponse(c, http.StatusInternalServerError, "export_notification_failed", err.Error())
-				return
-			}
+		notifNames := make([]string, 0, len(linkedNotifications))
+		for _, n := range linkedNotifications {
 			notifNames = append(notifNames, n.Name)
-			notifNameSet[n.Name] = &n
+			notification := n
+			notifNameSet[n.Name] = &notification
 		}
 
 		exportMonitors[i] = exportMonitorFromModel(m, tags, notifNames, userGroupPath(h.DB, userID, m.GroupID))
@@ -200,6 +191,19 @@ func (h *ImportExportHandler) ExportMonitors(c *gin.Context) {
 
 	c.Header("Content-Disposition", "attachment; filename=uptime_ng_export.json")
 	c.JSON(http.StatusOK, file)
+}
+
+func parseExportMonitorIDs(idsParam string) ([]uint, *requestValidationError) {
+	var ids []uint
+	if err := json.Unmarshal([]byte(idsParam), &ids); err != nil {
+		return nil, &requestValidationError{code: "invalid_export_ids", message: "ids must be a JSON array of positive monitor ids"}
+	}
+	for _, id := range ids {
+		if id == 0 {
+			return nil, &requestValidationError{code: "invalid_export_ids", message: "ids must be a JSON array of positive monitor ids"}
+		}
+	}
+	return ids, nil
 }
 
 func (h *ImportExportHandler) ImportPreview(c *gin.Context) {
