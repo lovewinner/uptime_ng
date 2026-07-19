@@ -86,6 +86,7 @@ export function defaultMonitorPayload(): MonitorPayload {
     response_max_length: 4096,
     ping_count: 4,
     ping_per_request_timeout: 1000,
+    ip_range: "",
     accepted_status_codes: [...DEFAULT_STATUS_CODES],
     notification_ids: [],
   }
@@ -139,6 +140,7 @@ export function monitorPayloadFromMonitor(monitor: Monitor): MonitorPayload {
     response_max_length: monitor.response_max_length || 4096,
     ping_count: monitor.ping_count || 4,
     ping_per_request_timeout: monitor.ping_per_request_timeout || 1000,
+    ip_range: "",
     accepted_status_codes: statusCodesFromMonitor(monitor),
     notification_ids: [...(monitor.notification_ids || [])],
   }

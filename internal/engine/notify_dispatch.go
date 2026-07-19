@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"log"
 
 	"gorm.io/gorm"

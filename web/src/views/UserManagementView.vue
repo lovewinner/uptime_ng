@@ -17,6 +17,8 @@ import {
 
 const users = ref<User[]>([])
 const loading = ref(false)
+const regOpen = ref(false)
+const regLoading = ref(false)
 
 async function fetchUsers() {
   loading.value = true
@@ -27,6 +29,31 @@ async function fetchUsers() {
     // ignore
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchRegStatus() {
+  try {
+    const res = await api.get('/settings')
+    const settings = arrayFromResponse<{ key: string; value: string }>(res.data)
+    const reg = settings.find(s => s.key === 'registration_open')
+    regOpen.value = reg?.value === 'true'
+  } catch {
+    // ignore
+  }
+}
+
+async function toggleRegistration() {
+  regLoading.value = true
+  try {
+    const newVal = regOpen.value ? 'false' : 'true'
+    await api.put('/settings/registration_open', { value: newVal })
+    regOpen.value = newVal === 'true'
+    ElMessage.success(regOpen.value ? '注册功能已开启' : '注册功能已关闭')
+  } catch (e: unknown) {
+    ElMessage.error(apiErrorMessage(e, '操作失败'))
+  } finally {
+    regLoading.value = false
   }
 }
 
@@ -65,12 +92,21 @@ async function resetPassword(user: User) {
   }
 }
 
-onMounted(fetchUsers)
+onMounted(() => {
+  fetchUsers()
+  fetchRegStatus()
+})
 </script>
 
 <template>
   <div>
     <h2>用户管理</h2>
+
+    <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px">
+      <span style="font-weight: 500">公开注册:</span>
+      <el-switch v-model="regOpen" :loading="regLoading" @change="toggleRegistration" />
+      <el-tag :type="regOpen ? 'success' : 'info'" size="small">{{ regOpen ? '开启' : '关闭' }}</el-tag>
+    </div>
 
     <el-table :data="users" v-loading="loading" border stripe style="width:100%">
       <el-table-column prop="id" label="ID" width="80" />

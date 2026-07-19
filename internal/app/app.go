@@ -87,6 +87,8 @@ func runMigrations(db *gorm.DB) {
 	}
 
 	log.Println("Database migration completed")
+
+	seedDefaultAdmin(db)
 }
 
 func setupRouter(db *gorm.DB) *gin.Engine {

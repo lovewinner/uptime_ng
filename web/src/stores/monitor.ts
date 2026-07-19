@@ -85,6 +85,11 @@ export const useMonitorStore = defineStore('monitor', () => {
   }
 
   async function createMonitor(monitor: MonitorPayload) {
+  async function createPingRange(monitor: MonitorPayload) {
+    const res = await api.post("/monitors/ping-range", monitor)
+    await fetchMonitors()
+    return res.data
+  }
     const res = await api.post('/monitors', monitor)
     await fetchMonitors()
     return res.data
@@ -129,7 +134,7 @@ export const useMonitorStore = defineStore('monitor', () => {
   return {
     statusList, monitors, notifications, loading,
     fetchStatus, fetchMonitors, fetchNotifications,
-    fetchMonitorStatus, createMonitor, updateMonitor, deleteMonitor, pauseMonitor, resumeMonitor,
+    fetchMonitorStatus, createMonitor, createPingRange, updateMonitor, deleteMonitor, pauseMonitor, resumeMonitor,
     statusColor, statusText, parseCodes, buildMonitorTree, groupOptions, groupLabel, statusByID,
   }
 })

@@ -16,9 +16,12 @@ func Setup(r *gin.Engine, db *gorm.DB, hub *handler.WSHub, scheduler handler.Mon
 	})
 
 	auth := handler.NewAuthHandler(db)
+	settings := handler.NewSettingsHandler(db)
 
+	// Public endpoints (no auth required)
 	r.POST("/api/auth/register", auth.Register)
 	r.POST("/api/auth/login", auth.Login)
+	r.GET("/api/auth/registration-status", settings.GetRegistrationStatus)
 
 	api := r.Group("/api")
 	api.Use(middleware.AuthRequired())
@@ -27,9 +30,14 @@ func Setup(r *gin.Engine, db *gorm.DB, hub *handler.WSHub, scheduler handler.Mon
 	api.GET("/auth/users", middleware.AdminRequired(), auth.ListUsers)
 	api.PATCH("/auth/users/:id", middleware.AdminRequired(), auth.UpdateUser)
 
+	// Settings (admin only)
+	api.GET("/settings", middleware.AdminRequired(), settings.GetSettings)
+	api.PUT("/settings/:key", middleware.AdminRequired(), settings.UpdateSetting)
+
 	monitor := handler.NewMonitorHandler(db, scheduler)
 	api.GET("/monitors", monitor.List)
 	api.POST("/monitors", monitor.Create)
+	api.POST("/monitors/ping-range", monitor.CreatePingRange)
 	api.GET("/monitors/:id", monitor.Get)
 	api.PUT("/monitors/:id", monitor.Update)
 	api.DELETE("/monitors/:id", monitor.Delete)

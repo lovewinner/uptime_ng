@@ -58,6 +58,7 @@ export interface Monitor {
   response_max_length: number
   ping_count: number
   ping_per_request_timeout: number
+  ip_range?: string
   accepted_status_codes: string[] | string
   tags?: Tag[]
   notification_ids?: number[]
@@ -117,6 +118,7 @@ export interface MonitorPayload {
   response_max_length: number
   ping_count: number
   ping_per_request_timeout: number
+  ip_range?: string
   accepted_status_codes: string[]
   notification_ids: number[]
 }

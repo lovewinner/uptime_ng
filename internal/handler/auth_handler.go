@@ -63,6 +63,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
+	if !IsRegistrationOpen(h.DB) {
+		errorResponse(c, http.StatusForbidden, "registration_closed", "registration is currently disabled")
+		return
+	}
+
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "invalid_request", err.Error())

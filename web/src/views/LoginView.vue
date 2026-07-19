@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import api from '@/api/http'
 import { emptyAuthForm, loginSubmitState, nextRegisterVisible, registerSubmitState } from './login'
 
 const auth = useAuthStore()
@@ -15,6 +16,16 @@ const registerLoading = ref(false)
 const loginError = ref('')
 const registerError = ref('')
 const showRegister = ref(false)
+const registrationEnabled = ref(false)
+
+onMounted(async () => {
+  try {
+    const res = await api.get('/auth/registration-status')
+    registrationEnabled.value = res.data?.registration_open === true
+  } catch {
+    registrationEnabled.value = false
+  }
+})
 
 async function handleLogin() {
   loginLoading.value = true
@@ -61,7 +72,7 @@ async function handleRegister() {
           <el-alert v-if="loginError" :title="loginError" type="error" show-icon :closable="false" style="margin-bottom:15px" />
           <el-button type="primary" native-type="submit" :loading="loginLoading" style="width:100%">登录</el-button>
         </el-form>
-        <div style="text-align:center;margin-top:15px">
+        <div v-if="registrationEnabled" style="text-align:center;margin-top:15px">
           <el-button type="text" @click="showRegister = nextRegisterVisible(showRegister)">没有账号？注册</el-button>
         </div>
       </template>
