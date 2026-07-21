@@ -43,6 +43,7 @@ onUnmounted(() => {
       <nav v-if="!isMobile" class="nav-bar">
         <el-button text style="color: #ccc" @click="$router.push('/')">仪表盘</el-button>
         <el-button text style="color: #ccc" @click="$router.push('/monitors')">监控项</el-button>
+        <el-button text style="color: #ccc" @click="$router.push('/monitors/batch-import')">批量录入</el-button>
         <el-button text style="color: #ccc" @click="$router.push('/notifications')">通知</el-button>
         <el-button text style="color: #ccc" @click="$router.push('/sla')">SLA报表</el-button>
         <el-button text style="color: #ccc" @click="$router.push('/maintenance')">维护窗口</el-button>
@@ -58,6 +59,7 @@ onUnmounted(() => {
       <el-menu mode="vertical" @select="navTo">
         <el-menu-item index="/" @click="$router.push('/')">仪表盘</el-menu-item>
         <el-menu-item index="/monitors" @click="$router.push('/monitors')">监控项</el-menu-item>
+        <el-menu-item index="/monitors/batch-import" @click="$router.push('/monitors/batch-import')">批量录入</el-menu-item>
         <el-menu-item index="/notifications" @click="$router.push('/notifications')">通知</el-menu-item>
         <el-menu-item index="/sla" @click="$router.push('/sla')">SLA报表</el-menu-item>
         <el-menu-item index="/maintenance" @click="$router.push('/maintenance')">维护窗口</el-menu-item>

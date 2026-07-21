@@ -43,7 +43,6 @@ const dialogVisible = computed({
 const formRef = ref()
 const saving = ref(false)
 const statusTags = ref<string[]>([...DEFAULT_STATUS_CODES])
-const usePingRange = ref(false)
 
 const form = ref<MonitorPayload>(defaultMonitorPayload())
 
@@ -76,11 +75,9 @@ watch(
     if (val) {
       form.value = monitorPayloadFromMonitor(val)
       statusTags.value = statusCodesFromMonitor(val)
-      usePingRange.value = false
     } else {
       form.value = defaultMonitorPayload()
       statusTags.value = [...DEFAULT_STATUS_CODES]
-      usePingRange.value = false
     }
   },
   { immediate: true },
@@ -99,15 +96,7 @@ async function handleSubmit() {
   saving.value = true
   try {
     const payload = monitorSubmitPayload(form.value)
-    if (form.value.type === 'ping' && usePingRange.value && payload.ip_range) {
-      const result = await store.createPingRange(payload)
-      const totalMsg = `共 ${result.total} 个 IP，成功创建 ${result.created} 个`
-      if (result.errors?.length) {
-        ElMessage.warning(`${totalMsg}，${result.errors.length} 个失败`)
-      } else {
-        ElMessage.success(totalMsg)
-      }
-    } else if (isEdit.value) {
+    if (isEdit.value) {
       await store.updateMonitor(props.monitor!.id, payload)
       ElMessage.success('保存成功')
     } else {
@@ -190,22 +179,8 @@ function handleStatusCodeInput(event: Event) {
         </el-form-item>
       </template>
 
-      <template v-if="form.type === 'ping' && !isEdit">
-        <el-divider content-position="left">批量录入 (可选)</el-divider>
-        <el-form-item label="IP范围录入">
-          <el-switch v-model="usePingRange" />
-          <span style="margin-left: 8px; font-size: 12px; color: #999">为每个IP创建独立监控</span>
-        </el-form-item>
-        <el-form-item v-if="usePingRange" label="IP范围" prop="ip_range" :rules="[{ required: usePingRange, message: '请输入IP范围' }]">
-          <el-input v-model="form.ip_range" placeholder="如 192.168.1.1-192.168.1.254 或 10.0.0.0/28" />
-          <div style="font-size: 11px; color: #999; margin-top: 4px">
-            支持: CIDR(10.0.0.0/28)、范围(192.168.1.1-192.168.1.254)、列表(ip1,ip2,ip3)
-          </div>
-        </el-form-item>
-      </template>
-
       <template v-if="form.type === 'ping' || form.type === 'dns'">
-        <el-form-item label="主机名" prop="hostname" :rules="[{ required: !usePingRange, message: '请输入主机名' }]">
+        <el-form-item label="主机名" prop="hostname" :rules="[{ required: true, message: '请输入主机名' }]">
           <el-input v-model="form.hostname" placeholder="example.com" />
         </el-form-item>
       </template>

@@ -164,6 +164,7 @@ async function refreshRowStatus(row: MonitorTreeNode) {
       <div style="display: flex; gap: 8px; flex-wrap: wrap">
         <el-button @click="exportVisible = true">导出</el-button>
         <el-button @click="importVisible = true">导入</el-button>
+        <el-button @click="$router.push('/monitors/batch-import')">批量录入</el-button>
         <el-button type="primary" @click="handleCreate">新增监控</el-button>
       </div>
     </div>

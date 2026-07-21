@@ -23,6 +23,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/monitors/batch-import',
+      name: 'batch-import',
+      component: () => import('@/views/PingRangeImportView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/monitors/:id',
       name: 'monitor-detail',
       component: () => import('@/views/MonitorDetailView.vue'),
